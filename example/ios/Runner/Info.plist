@@ -4,8 +4,8 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.healthbgsync.refresh</string>
-        <string>com.healthbgsync.process</string>
+		<string>com.healthbgsync.task.refresh</string>
+        <string>com.healthbgsync.task.process</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>

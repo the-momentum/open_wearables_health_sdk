@@ -20,7 +20,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  health_bg_sync: 919a98f43e6fe55dee4a8d6d8bc3d80b450645ee
+  health_bg_sync: 854c077d3d1182048a7157664b5ed131523ed1bd
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
 
 PODFILE CHECKSUM: 53a6aebc29ccee84c41f92f409fc20cd4ca011f1

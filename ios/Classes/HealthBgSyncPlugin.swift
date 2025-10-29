@@ -6,27 +6,29 @@ import BackgroundTasks
 public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, URLSessionTaskDelegate {
 
     // MARK: - State
-    private let healthStore = HKHealthStore()
-    private var session: URLSession!
-    private var endpoint: URL?
-    private var token: String?
-    private var trackedTypes: [HKSampleType] = []
+    internal let healthStore = HKHealthStore()
+    internal var session: URLSession!
+    internal var endpoint: URL?
+    internal var token: String?
+    internal var trackedTypes: [HKSampleType] = []
+    internal var chunkSize: Int = 1000 // Configurable chunk size to prevent HTTP 413 errors
+    internal var backgroundChunkSize: Int = 100 // Smaller chunk size for background operations
 
     // Per-endpoint state (anchors + full-export-done flag)
-    private let defaults = UserDefaults(suiteName: "com.healthbgsync.state") ?? .standard
+    internal let defaults = UserDefaults(suiteName: "com.healthbgsync.state") ?? .standard
 
     // Observer queries for background delivery
-    private var activeObserverQueries: [HKObserverQuery] = []
+    internal var activeObserverQueries: [HKObserverQuery] = []
 
     // Background session identifier
-    private let bgSessionId = "com.healthbgsync.upload.session"
+    internal let bgSessionId = "com.healthbgsync.upload.session"
 
     // BGTask identifiers (MUST be present in Info.plist -> BGTaskSchedulerPermittedIdentifiers)
-    private let refreshTaskId  = "com.healthbgsync.task.refresh"
-    private let processTaskId  = "com.healthbgsync.task.process"
+    internal let refreshTaskId  = "com.healthbgsync.task.refresh"
+    internal let processTaskId  = "com.healthbgsync.task.process"
 
     // AppDelegate will pass its background completion handler here
-    private static var bgCompletionHandler: (() -> Void)?
+    internal static var bgCompletionHandler: (() -> Void)?
 
     // MARK: - Flutter registration
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -74,8 +76,13 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
             self.endpoint = URL(string: endpointStr)
             self.token = token
             self.trackedTypes = mapTypes(types)
+            
+            // Configure chunk size if provided (default: 1000)
+            if let chunkSizeArg = args["chunkSize"] as? Int, chunkSizeArg > 0 {
+                self.chunkSize = chunkSizeArg
+            }
 
-            print("✅ Initialized for endpointKey=\(endpointKey()) types=\(trackedTypes.map{$0.identifier})")
+            print("✅ Initialized for endpointKey=\(endpointKey()) types=\(trackedTypes.map{$0.identifier}) chunkSize=\(chunkSize)")
 
             // Retry pending outbox items (if any)
             retryOutboxIfPossible()
@@ -113,139 +120,112 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
         }
     }
 
-    // MARK: - Type mapping
-    private func mapTypes(_ names: [String]) -> [HKSampleType] {
-        var out: [HKSampleType] = []
-        for n in names {
-            switch n {
-            case "steps":
-                if let t = HKObjectType.quantityType(forIdentifier: .stepCount) { out.append(t) }
-            case "heartRate":
-                if let t = HKObjectType.quantityType(forIdentifier: .heartRate) { out.append(t) }
-            case "activeEnergy":
-                if let t = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) { out.append(t) }
-            case "distanceWalkingRunning":
-                if let t = HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning) { out.append(t) }
-            case "sleep":
-                if let t = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { out.append(t) }
-            default: break
-            }
-        }
-        return out
-    }
-
     // MARK: - Authorization
-    private func requestAuthorization(completion: @escaping (Bool)->Void) {
-        guard HKHealthStore.isHealthDataAvailable() else { completion(false); return }
-        let toRead = Set(trackedTypes)
+    internal func requestAuthorization(completion: @escaping (Bool)->Void) {
+        guard HKHealthStore.isHealthDataAvailable() else { 
+            DispatchQueue.main.async { completion(false) }
+            return 
+        }
+        
+        // Filter out correlation types - they cannot be requested for authorization
+        // Correlation types are automatically available when component types are authorized
+        let toRead = Set(trackedTypes.filter { !($0 is HKCorrelationType) })
+        
         healthStore.requestAuthorization(toShare: nil, read: toRead) { ok, _ in
-            completion(ok)
+            DispatchQueue.main.async { completion(ok) }
         }
-    }
-
-    // MARK: - Keys (per-endpoint)
-    private func endpointKey() -> String {
-        guard let s = endpoint?.absoluteString, !s.isEmpty else { return "endpoint.none" }
-        // Simple safe key for UserDefaults (no CryptoKit)
-        let safe = s.replacingOccurrences(of: "[^A-Za-z0-9._-]", with: "_", options: .regularExpression)
-        return "ep.\(safe)"
-    }
-    private func anchorKey(for type: HKSampleType) -> String { "anchor.\(endpointKey()).\(type.identifier)" }
-    private func fullDoneKey() -> String { "fullDone.\(endpointKey())" }
-
-    // Identifier-based variants (to store anchors without needing HKSampleType in memory)
-    private func anchorKey(typeIdentifier: String, endpointKey: String) -> String {
-        return "anchor.\(endpointKey).\(typeIdentifier)"
-    }
-    private func saveAnchorData(_ data: Data, typeIdentifier: String, endpointKey: String) {
-        defaults.set(data, forKey: anchorKey(typeIdentifier: typeIdentifier, endpointKey: endpointKey))
-    }
-
-    // MARK: - Anchors
-    private func loadAnchor(for type: HKSampleType) -> HKQueryAnchor? {
-        guard let data = defaults.data(forKey: anchorKey(for: type)) else { return nil }
-        return try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
-    }
-    private func saveAnchor(_ anchor: HKQueryAnchor, for type: HKSampleType) {
-        if let data = try? NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true) {
-            defaults.set(data, forKey: anchorKey(for: type))
-        }
-    }
-    private func resetAllAnchors() {
-        for t in trackedTypes { defaults.removeObject(forKey: anchorKey(for: t)) }
-        defaults.set(false, forKey: fullDoneKey())
-    }
-
-    // MARK: - Initial sync plan
-    private func initialSyncKickoff(completion: @escaping ()->Void) {
-        let fullDone = defaults.bool(forKey: fullDoneKey())
-        if fullDone {
-            // Endpoint already completed full export → do incremental only
-            syncAll(fullExport: false, completion: completion)
-        } else {
-            // First time for this endpoint → perform full export
-            syncAll(fullExport: true) {
-                self.defaults.set(true, forKey: self.fullDoneKey())
-                completion()
-            }
-        }
-    }
-
-    // MARK: - Background delivery
-    private func startBackgroundDelivery() {
-        for q in activeObserverQueries { healthStore.stop(q) }
-        activeObserverQueries.removeAll()
-
-        for type in trackedTypes {
-            let observer = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completionHandler, error in
-                guard let self = self else { return }
-                // Short "grace time" so uploads can finish cleanly
-                var bgTask: UIBackgroundTaskIdentifier = .invalid
-                bgTask = UIApplication.shared.beginBackgroundTask(withName: "health_observer_sync") {
-                    UIApplication.shared.endBackgroundTask(bgTask)
-                    bgTask = .invalid
-                }
-
-                if let error = error {
-                    print("⚠️ Observer error for \(type.identifier): \(error.localizedDescription)")
-                    completionHandler()
-                    if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask) }
-                    return
-                }
-
-                self.syncType(type, fullExport: false) {
-                    completionHandler()
-                    if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask) }
-                }
-            }
-            healthStore.execute(observer)
-            activeObserverQueries.append(observer)
-            healthStore.enableBackgroundDelivery(for: type, frequency: .immediate) { _, _ in }
-        }
-        print("📡 Background observers registered for \(trackedTypes.count) types")
-    }
-
-    private func stopBackgroundDelivery() {
-        for q in activeObserverQueries { healthStore.stop(q) }
-        activeObserverQueries.removeAll()
-        for t in trackedTypes { healthStore.disableBackgroundDelivery(for: t) {_,_ in} }
     }
 
     // MARK: - Sync (all / single)
-    private func syncAll(fullExport: Bool, completion: @escaping ()->Void) {
+    internal func syncAll(fullExport: Bool, completion: @escaping ()->Void) {
         guard !trackedTypes.isEmpty else { completion(); return }
+        
+        // Collect data from all types and send together
+        collectAllData(fullExport: fullExport, completion: completion)
+    }
+    
+    // MARK: - Combined data collection and sync
+    internal func collectAllData(fullExport: Bool, completion: @escaping ()->Void) {
+        collectAllData(fullExport: fullExport, isBackground: false, completion: completion)
+    }
+    
+    internal func collectAllData(fullExport: Bool, isBackground: Bool, completion: @escaping ()->Void) {
+        let allSamples = NSMutableArray()
+        let allAnchors = NSMutableDictionary()
         let group = DispatchGroup()
-        for t in trackedTypes {
+        let lock = NSLock()
+        
+        // Use smaller chunk size for background operations
+        let currentChunkSize = isBackground ? backgroundChunkSize : chunkSize
+        
+        // Process all types concurrently but with proper thread management
+        for type in trackedTypes {
             group.enter()
-            syncType(t, fullExport: fullExport) { group.leave() }
+            let anchor = fullExport ? nil : loadAnchor(for: type)
+            
+            let query = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: currentChunkSize) {
+                [weak self] _, samplesOrNil, deletedObjects, newAnchor, error in
+                guard let self = self else { 
+                    group.leave()
+                    return 
+                }
+                guard error == nil else { 
+                    group.leave()
+                    return 
+                }
+                
+                let samples = samplesOrNil ?? []
+                // Thread-safe access to shared data
+                lock.lock()
+                allSamples.addObjects(from: samples)
+                if let newAnchor = newAnchor {
+                    allAnchors[type.identifier] = newAnchor
+                }
+                lock.unlock()
+                group.leave()
+            }
+            healthStore.execute(query)
         }
-        group.notify(queue: .main) { completion() }
+        
+        // Use notify instead of wait to avoid blocking the main thread
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self else { completion(); return }
+            
+            // If no data, we're done
+            guard allSamples.count > 0 else { completion(); return }
+            guard let endpoint = self.endpoint, let token = self.token else { completion(); return }
+            
+            // Convert back to proper types
+            let samples = allSamples.compactMap { $0 as? HKSample }
+            var anchors: [String: HKQueryAnchor] = [:]
+            for (key, value) in allAnchors {
+                if let keyString = key as? String, let anchor = value as? HKQueryAnchor {
+                    anchors[keyString] = anchor
+                }
+            }
+            
+            // Create combined payload
+            let payload = self.serializeCombined(samples: samples, anchors: anchors)
+            
+            // Send combined data
+            self.enqueueCombinedUpload(payload: payload, anchors: anchors, endpoint: endpoint, token: token) {
+                // If we got currentChunkSize samples from any type, there might be more data
+                let hasMoreData = samples.count >= currentChunkSize
+                if hasMoreData {
+                    // Continue with next chunk
+                    self.collectAllData(fullExport: false, isBackground: isBackground, completion: completion)
+                } else {
+                    completion()
+                }
+            }
+        }
     }
 
-    private func syncType(_ type: HKSampleType, fullExport: Bool, completion: @escaping ()->Void) {
+    internal func syncType(_ type: HKSampleType, fullExport: Bool, completion: @escaping ()->Void) {
         let anchor = fullExport ? nil : loadAnchor(for: type)
-        let query = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: HKObjectQueryNoLimit) {
-            [weak self] _, samplesOrNil, _, newAnchor, error in
+        
+        let query = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: chunkSize) {
+            [weak self] _, samplesOrNil, deletedObjects, newAnchor, error in
             guard let self = self else { completion(); return }
             guard error == nil else { completion(); return }
 
@@ -256,238 +236,71 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
 
             let payload = self.serialize(samples: samples, type: type)
             self.enqueueBackgroundUpload(payload: payload, type: type, candidateAnchor: newAnchor, endpoint: endpoint, token: token) {
-                completion()
+                // If we got exactly chunkSize samples, there might be more - continue syncing
+                if samples.count == self.chunkSize {
+                    // Recursively continue with the new anchor
+                    self.syncType(type, fullExport: false, completion: completion)
+                } else {
+                    // We got fewer than chunkSize, so we're done
+                    completion()
+                }
             }
         }
         healthStore.execute(query)
     }
+    
+    // MARK: - Background-optimized sync
+    internal func syncTypeBackground(_ type: HKSampleType, fullExport: Bool, completion: @escaping ()->Void) {
+        let anchor = fullExport ? nil : loadAnchor(for: type)
+        
+        let query = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: backgroundChunkSize) {
+            [weak self] _, samplesOrNil, deletedObjects, newAnchor, error in
+            guard let self = self else { completion(); return }
+            guard error == nil else { completion(); return }
 
-    // MARK: - Serialization
-    private func serialize(samples: [HKSample], type: HKSampleType) -> [String: Any] {
-        let df = ISO8601DateFormatter()
-        var out: [[String: Any]] = []
+            let samples = samplesOrNil ?? []
+            // Nothing to send if empty
+            guard !samples.isEmpty else { completion(); return }
+            guard let endpoint = self.endpoint, let token = self.token else { completion(); return }
 
-        for s in samples {
-            if let q = s as? HKQuantitySample {
-                let unit: HKUnit
-                switch q.quantityType {
-                case HKObjectType.quantityType(forIdentifier: .stepCount):
-                    unit = .count()
-                case HKObjectType.quantityType(forIdentifier: .heartRate):
-                    unit = .count().unitDivided(by: .minute())
-                case HKObjectType.quantityType(forIdentifier: .activeEnergyBurned):
-                    unit = .kilocalorie()
-                case HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning):
-                    unit = .meter()
-                default:
-                    unit = .count()
+            let payload = self.serialize(samples: samples, type: type)
+            self.enqueueBackgroundUpload(payload: payload, type: type, candidateAnchor: newAnchor, endpoint: endpoint, token: token) {
+                // If we got backgroundChunkSize samples, there might be more - continue syncing
+                if samples.count == self.backgroundChunkSize {
+                    // Recursively continue with the new anchor
+                    self.syncTypeBackground(type, fullExport: false, completion: completion)
+                } else {
+                    // We got fewer than backgroundChunkSize, so we're done
+                    completion()
                 }
-                out.append([
-                    "type": q.quantityType.identifier,
-                    "start": df.string(from: q.startDate),
-                    "end": df.string(from: q.endDate),
-                    "value": q.quantity.doubleValue(for: unit),
-                    "unit": unit.description
-                ])
-            } else if let c = s as? HKCategorySample {
-                out.append([
-                    "type": c.categoryType.identifier,
-                    "start": df.string(from: c.startDate),
-                    "end": df.string(from: c.endDate),
-                    "value": c.value
-                ])
             }
         }
-
-        return [
-            "device": "ios",
-            "endpointKey": endpointKey(),
-            "batchGeneratedAt": df.string(from: Date()),
-            "samples": out
-        ]
+        healthStore.execute(query)
     }
-
-    // MARK: - Outbox model
-    private struct OutboxItem: Codable {
-        let typeIdentifier: String
-        let endpointKey: String
-        let payloadPath: String
-        let anchorPath: String?
-    }
-
-    private func outboxDir() -> URL {
-        let base = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        return (base ?? FileManager.default.temporaryDirectory).appendingPathComponent("health_outbox", isDirectory: true)
-    }
-    private func ensureOutboxDir() {
-        try? FileManager.default.createDirectory(at: outboxDir(), withIntermediateDirectories: true)
-    }
-    private func newPath(_ name: String, ext: String) -> URL {
-        ensureOutboxDir()
-        return outboxDir().appendingPathComponent("\(name).\(ext)")
-    }
-
-    // MARK: - Background upload with persistence
-    private func enqueueBackgroundUpload(payload: [String: Any], type: HKSampleType, candidateAnchor: HKQueryAnchor?, endpoint: URL, token: String, completion: @escaping ()->Void) {
-        // 1) payload → file
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { completion(); return }
-        let id = UUID().uuidString
-        let payloadURL = newPath("payload_\(id)", ext: "json")
-        do { try data.write(to: payloadURL, options: .atomic) } catch { completion(); return }
-
-        // 2) candidate anchor → file (optional)
-        var anchorURL: URL? = nil
-        if let cand = candidateAnchor,
-           let ad = try? NSKeyedArchiver.archivedData(withRootObject: cand, requiringSecureCoding: true) {
-            let u = newPath("anchor_\(id)", ext: "bin")
-            try? ad.write(to: u, options: .atomic)
-            anchorURL = u
+    
+    // MARK: - Background-safe sync (for use in background tasks)
+    internal func syncTypeWithTimeout(_ type: HKSampleType, fullExport: Bool, timeout: TimeInterval = 20, completion: @escaping ()->Void) {
+        let group = DispatchGroup()
+        group.enter()
+        
+        syncType(type, fullExport: fullExport) {
+            group.leave()
         }
-
-        // 3) manifest (item) → file
-        let item = OutboxItem(typeIdentifier: type.identifier,
-                              endpointKey: endpointKey(),
-                              payloadPath: payloadURL.path,
-                              anchorPath: anchorURL?.path)
-        let itemURL = newPath("item_\(id)", ext: "json")
-        if let md = try? JSONEncoder().encode(item) { try? md.write(to: itemURL, options: .atomic) }
-
-        // 4) request
-        var req = URLRequest(url: endpoint)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-        // 5) background upload (from file)
-        let task = session.uploadTask(with: req, fromFile: payloadURL)
-        task.taskDescription = [itemURL.path, payloadURL.path, anchorURL?.path ?? ""].joined(separator: "|")
-        task.resume()
-
+        
+        // Wait with timeout
+        let result = group.wait(timeout: .now() + timeout)
+        if result == .timedOut {
+            print("⚠️ Sync timeout for \(type.identifier)")
+        }
         completion()
     }
+}
 
-    // Retry pending items after startup (when endpoint/token are available)
-    private func retryOutboxIfPossible() {
-        guard let endpoint = self.endpoint, let token = self.token else { return }
-        let dir = outboxDir()
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
-        let items = files.filter { $0.lastPathComponent.hasPrefix("item_") && $0.pathExtension == "json" }
-
-        for itemURL in items {
-            guard let data = try? Data(contentsOf: itemURL),
-                  let item = try? JSONDecoder().decode(OutboxItem.self, from: data) else { continue }
-            let payloadURL = URL(fileURLWithPath: item.payloadPath)
-            guard FileManager.default.fileExists(atPath: payloadURL.path) else { continue }
-
-            var req = URLRequest(url: endpoint)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            let task = session.uploadTask(with: req, fromFile: payloadURL)
-            task.taskDescription = [itemURL.path, payloadURL.path, item.anchorPath ?? ""].joined(separator: "|")
-            task.resume()
+// MARK: - Array extension for chunking
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
         }
-    }
-
-    // MARK: - URLSession delegate
-    public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let desc = task.taskDescription else { return }
-        let parts = desc.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
-        let itemPath = parts.count > 0 ? parts[0] : ""
-        let payloadPath = parts.count > 1 ? parts[1] : ""
-        let anchorPath = parts.count > 2 ? parts[2] : ""
-
-        defer {
-            if !payloadPath.isEmpty { try? FileManager.default.removeItem(atPath: payloadPath) }
-            if error == nil, !itemPath.isEmpty { try? FileManager.default.removeItem(atPath: itemPath) }
-        }
-
-        // Transport error → keep manifest + anchor for retry
-        if let error = error {
-            print("⛔️ background upload failed: \(error.localizedDescription)")
-            return
-        }
-
-        // Only treat 2xx as success (HEAD/redirects can happen in background)
-        if let http = task.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            print("⛔️ upload HTTP \(http.statusCode) — keep item for retry")
-            return
-        }
-
-        // SUCCESS: save anchor BASED ON MANIFEST — no need to have trackedTypes in memory
-        if !anchorPath.isEmpty,
-           let itemData = try? Data(contentsOf: URL(fileURLWithPath: itemPath)),
-           let item = try? JSONDecoder().decode(OutboxItem.self, from: itemData),
-           let anchorData = try? Data(contentsOf: URL(fileURLWithPath: anchorPath)) {
-
-            saveAnchorData(anchorData, typeIdentifier: item.typeIdentifier, endpointKey: item.endpointKey)
-            try? FileManager.default.removeItem(atPath: anchorPath)
-        }
-    }
-
-    public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        if let handler = HealthBgSyncPlugin.bgCompletionHandler {
-            HealthBgSyncPlugin.bgCompletionHandler = nil
-            handler()
-        }
-    }
-
-    // MARK: - BGTaskScheduler (fallback catch-up)
-    private func scheduleAppRefresh() {
-        guard #available(iOS 13.0, *) else { return }
-        let req = BGAppRefreshTaskRequest(identifier: refreshTaskId)
-        // Earliest in ~15 minutes (iOS decides the actual time)
-        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        do { try BGTaskScheduler.shared.submit(req) }
-        catch { print("⚠️ scheduleAppRefresh error: \(error.localizedDescription)") }
-    }
-
-    private func scheduleProcessing() {
-        guard #available(iOS 13.0, *) else { return }
-        let req = BGProcessingTaskRequest(identifier: processTaskId)
-        req.requiresNetworkConnectivity = true
-        req.requiresExternalPower = false
-        do { try BGTaskScheduler.shared.submit(req) }
-        catch { print("⚠️ scheduleProcessing error: \(error.localizedDescription)") }
-    }
-
-    private func cancelAllBGTasks() {
-        if #available(iOS 13.0, *) {
-            BGTaskScheduler.shared.cancelAllTaskRequests()
-        }
-    }
-
-    @available(iOS 13.0, *)
-    private func handleAppRefresh(task: BGAppRefreshTask) {
-        // Always reschedule
-        scheduleAppRefresh()
-
-        let opQueue = OperationQueue()
-        let op = BlockOperation { [weak self] in
-            // Incremental sync for all types
-            self?.syncAll(fullExport: false) { }
-        }
-
-        task.expirationHandler = { op.cancel() }
-        op.completionBlock = { task.setTaskCompleted(success: !op.isCancelled) }
-        opQueue.addOperation(op)
-    }
-
-    @available(iOS 13.0, *)
-    private func handleProcessing(task: BGProcessingTask) {
-        // Always reschedule
-        scheduleProcessing()
-
-        let opQueue = OperationQueue()
-        let op = BlockOperation { [weak self] in
-            // Incremental sync + retry outbox (if anything is pending)
-            self?.retryOutboxIfPossible()
-            self?.syncAll(fullExport: false) { }
-        }
-
-        task.expirationHandler = { op.cancel() }
-        op.completionBlock = { task.setTaskCompleted(success: !op.isCancelled) }
-        opQueue.addOperation(op)
     }
 }

@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:health_bg_sync/health_bg_sync.dart';
+import 'package:health_bg_sync/health_data_type.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   await HealthBgSync.initialize(
-    endpoint: 'https://webhook.site/38ef2363-2e0d-43ca-8dbe-9d312285b511',
+    endpoint: 'https://testmomentumex.requestcatcher.com/test',
     token: 'JWT_TOKEN',
-    types: ['steps', 'heartRate', 'activeEnergy', 'distanceWalkingRunning', 'sleep'],
+    types: HealthDataType.values,
+    chunkSize: 10000,
   );
-
+  print('WTFF');
   final ok = await HealthBgSync.requestAuthorization();
-  debugPrint('Health permission: $ok');
 
   runApp(const MyApp());
 }
