@@ -51,6 +51,7 @@ extension HealthBgSyncPlugin {
             // First time for this endpoint → perform full export
             // Note: fullDone will be marked true AFTER successful upload (in URLSessionDelegate)
             print("🔄 First time sync for this endpoint, performing full export")
+            isInitialSyncInProgress = true
             syncAll(fullExport: true, completion: completion)
         }
     }

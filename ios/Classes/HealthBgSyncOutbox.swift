@@ -261,6 +261,12 @@ extension HealthBgSyncPlugin {
 
         // Retry regular items
         for itemURL in regularItems {
+            // Skip very recent items to avoid duplicating in-flight uploads
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: itemURL.path),
+               let mdate = attrs[.modificationDate] as? Date,
+               Date().timeIntervalSince(mdate) < 30 {
+                continue
+            }
             guard let data = try? Data(contentsOf: itemURL),
                   let item = try? JSONDecoder().decode(OutboxItem.self, from: data) else { continue }
             let payloadURL = URL(fileURLWithPath: item.payloadPath)
@@ -290,6 +296,12 @@ extension HealthBgSyncPlugin {
         
         // Retry combined items
         for itemURL in combinedItems {
+            // Skip very recent items to avoid duplicating in-flight uploads
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: itemURL.path),
+               let mdate = attrs[.modificationDate] as? Date,
+               Date().timeIntervalSince(mdate) < 30 {
+                continue
+            }
             guard let itemData = try? Data(contentsOf: itemURL),
                   let item = try? JSONDecoder().decode(OutboxItem.self, from: itemData) else { continue }
             let payloadURL = URL(fileURLWithPath: item.payloadPath)

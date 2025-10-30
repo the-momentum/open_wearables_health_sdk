@@ -20,6 +20,9 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
     private var pendingSyncWorkItem: DispatchWorkItem?
     private let syncDebounceQueue = DispatchQueue(label: "health_sync_debounce")
     private var observerBgTask: UIBackgroundTaskIdentifier = .invalid
+    
+    // Flag to prevent duplicate initial syncs
+    internal var isInitialSyncInProgress = false
     private var isSyncing: Bool = false // Prevent concurrent syncs
     private let syncLock = NSLock()
 
@@ -129,6 +132,8 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
             // Perform initial full sync if not done yet (will be incremental after first sync)
             self.initialSyncKickoff {
                 print("✅ Initial sync completed")
+                // Clear the flag after initial sync completes
+                self.isInitialSyncInProgress = false
             }
             
             // Schedule fallback BG tasks for catch-up syncing
@@ -176,6 +181,12 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
     
     // MARK: - Debounced combined sync for observer queries
     internal func triggerCombinedSync() {
+        // Skip if initial sync is already in progress to prevent duplicates
+        if isInitialSyncInProgress {
+            print("⏭️ Skipping observer sync - initial sync in progress")
+            return
+        }
+        
         // Start background task if not already started
         if observerBgTask == .invalid {
             observerBgTask = UIApplication.shared.beginBackgroundTask(withName: "health_combined_sync") {
@@ -229,6 +240,7 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
             print("❌ HealthKit data not available")
             syncLock.lock()
             isSyncing = false
+            isInitialSyncInProgress = false
             syncLock.unlock()
             completion()
             return
@@ -302,9 +314,10 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
             
             print("✅ All queries completed. Total samples collected: \(allSamples.count)")
             
-            // Reset sync flag
+            // Reset sync flags
             self.syncLock.lock()
             self.isSyncing = false
+            self.isInitialSyncInProgress = false
             self.syncLock.unlock()
             
             // If no data, we're done
@@ -334,6 +347,7 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
                 print("ℹ️ No data to send")
                 self.syncLock.lock()
                 self.isSyncing = false
+                self.isInitialSyncInProgress = false
                 self.syncLock.unlock()
                 completion()
                 return
@@ -352,6 +366,7 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, URLSessionDelegate, UR
                     // All chunks sent successfully
                     self.syncLock.lock()
                     self.isSyncing = false
+                    self.isInitialSyncInProgress = false
                     self.syncLock.unlock()
                     completion()
                 }
