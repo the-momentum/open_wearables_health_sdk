@@ -11,6 +11,7 @@ export 'package:health_bg_sync/src/config.dart';
 export 'package:health_bg_sync/src/exceptions.dart';
 export 'package:health_bg_sync/src/status.dart';
 export 'package:health_bg_sync/src/user.dart';
+export 'health_bg_sync_method_channel.dart';
 
 /// Ensure MethodChannel is the default implementation.
 bool _hbgsRegistered = (() {
