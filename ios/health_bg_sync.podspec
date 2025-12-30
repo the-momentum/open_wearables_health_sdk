@@ -12,6 +12,7 @@ A new Flutter plugin project.
 
   # KLUCZOWE: tylko pliki źródłowe
   s.source_files = 'Classes/**/*.{h,m,swift}'
+  s.public_header_files = 'Classes/**/*.h'
 
   s.dependency 'Flutter'
   s.platform = :ios, '14.0'

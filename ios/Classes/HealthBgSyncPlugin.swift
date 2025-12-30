@@ -80,6 +80,11 @@ import BackgroundTasks
         instance.logEventChannel = logChannel
         logChannel.setStreamHandler(instance)
     }
+    
+    // Objective-C compatible registration method
+    @objc public static func registerWithRegistrar(_ registrar: FlutterPluginRegistrar) {
+        register(with: registrar)
+    }
 
     @objc public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
         HealthBgSyncPlugin.bgCompletionHandler = handler
