@@ -3,7 +3,7 @@ import UIKit
 import HealthKit
 import BackgroundTasks
 
-public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate {
+@objc public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate {
 
     // MARK: - Configuration State
     internal var baseUrl: String?
@@ -71,7 +71,7 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
     }
 
     // MARK: - Flutter registration
-    public static func register(with registrar: FlutterPluginRegistrar) {
+    @objc public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "health_bg_sync", binaryMessenger: registrar.messenger())
         let instance = HealthBgSyncPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
@@ -81,7 +81,7 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
         logChannel.setStreamHandler(instance)
     }
 
-    public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
+    @objc public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
         HealthBgSyncPlugin.bgCompletionHandler = handler
     }
 
