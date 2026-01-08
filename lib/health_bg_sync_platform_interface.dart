@@ -29,7 +29,16 @@ abstract class HealthBgSyncPlatform extends PlatformInterface {
   ///
   /// The accessToken is obtained from the developer's backend which generates it
   /// via communication with the Open Wearables API.
-  Future<void> signIn({required String userId, required String accessToken}) {
+  ///
+  /// Optionally pass [appId], [appSecret], and [baseUrl] to enable automatic
+  /// token refresh when the 60-minute token expires.
+  Future<void> signIn({
+    required String userId,
+    required String accessToken,
+    String? appId,
+    String? appSecret,
+    String? baseUrl,
+  }) {
     throw UnimplementedError('signIn() has not been implemented.');
   }
 
@@ -49,7 +58,9 @@ abstract class HealthBgSyncPlatform extends PlatformInterface {
 
   /// Requests authorization from HealthKit/Health Connect.
   Future<bool> requestAuthorization({required List<String> types}) {
-    throw UnimplementedError('requestAuthorization() has not been implemented.');
+    throw UnimplementedError(
+      'requestAuthorization() has not been implemented.',
+    );
   }
 
   // MARK: - Sync Operations
@@ -72,7 +83,9 @@ abstract class HealthBgSyncPlatform extends PlatformInterface {
 
   /// Returns stored credentials for debugging/display purposes.
   Future<Map<String, dynamic>> getStoredCredentials() {
-    throw UnimplementedError('getStoredCredentials() has not been implemented.');
+    throw UnimplementedError(
+      'getStoredCredentials() has not been implemented.',
+    );
   }
 }
 
