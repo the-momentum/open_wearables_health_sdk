@@ -5,7 +5,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.healthbgsync.task.refresh</string>
-        <string>com.healthbgsync.task.process</string>
+		<string>com.healthbgsync.task.process</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
@@ -31,10 +31,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSHealthClinicalHealthRecordsShareUsageDescription</key>
-	<string>App uses background delivery to sync health data</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>App reads health data (steps, heart rate, sleep) to sync with your account.</string>
+	<string>This app syncs your health data to your account.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>This app needs to update your health data.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>
