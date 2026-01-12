@@ -12,8 +12,9 @@ void main() async {
   runApp(const MyApp());
 }
 
-// Simple in-memory logs
+// Simple in-memory logs (limited to 1000 entries for performance)
 final List<String> appLogs = [];
+const int _maxLogEntries = 1000;
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -77,6 +78,10 @@ class _HomePageState extends State<HomePage> {
       final timestamp = DateTime.now().toIso8601String().split('T').last.split('.').first;
       setState(() {
         appLogs.add('$timestamp $message');
+        // Keep only the last N entries to prevent memory/performance issues
+        if (appLogs.length > _maxLogEntries) {
+          appLogs.removeRange(0, appLogs.length - _maxLogEntries);
+        }
       });
     });
   }
@@ -197,6 +202,10 @@ class _HomePageState extends State<HomePage> {
     setState(() => _statusMessage = message);
     final log = '${DateTime.now().toIso8601String().split('T').last.split('.').first} $message';
     appLogs.add(log);
+    // Keep only the last N entries to prevent memory/performance issues
+    if (appLogs.length > _maxLogEntries) {
+      appLogs.removeRange(0, appLogs.length - _maxLogEntries);
+    }
     debugPrint('[Demo] $message');
   }
 
@@ -629,46 +638,62 @@ class _LogsPageState extends State<LogsPage> {
                 ],
               ),
             )
-          : ListView.builder(
+          : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: appLogs.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 8),
               itemBuilder: (context, index) {
                 final log = appLogs[appLogs.length - 1 - index];
-                final isError = log.contains('❌') || log.contains('Error');
-                final isSuccess = log.contains('✅');
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        margin: const EdgeInsets.only(top: 6),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: isError
-                              ? const Color(0xFFFF3B30)
-                              : isSuccess
-                              ? const Color(0xFF34C759)
-                              : Colors.grey[300],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          log,
-                          style: TextStyle(fontSize: 13, fontFamily: 'Menlo', color: Colors.grey[700], height: 1.4),
-                        ),
-                      ),
-                    ],
-                  ),
+                return _LogItem(
+                  log: log,
+                  // Use log content + index as key for better performance
+                  key: ValueKey('${appLogs.length - 1 - index}_${log.hashCode}'),
                 );
               },
             ),
+    );
+  }
+}
+
+// Extracted log item widget for better performance
+class _LogItem extends StatelessWidget {
+  final String log;
+
+  const _LogItem({required this.log, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    // Pre-compute these once per item
+    final isError = log.contains('❌') || log.contains('Error');
+    final isSuccess = log.contains('✅');
+
+    final Color dotColor = isError
+        ? const Color(0xFFFF3B30)
+        : isSuccess
+        ? const Color(0xFF34C759)
+        : const Color(0xFFE5E5EA);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.all(Radius.circular(10))),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              log,
+              style: const TextStyle(fontSize: 13, fontFamily: 'Menlo', color: Color(0xFF666666), height: 1.4),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
