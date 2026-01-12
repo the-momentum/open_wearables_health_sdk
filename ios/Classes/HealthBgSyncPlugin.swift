@@ -3,7 +3,7 @@ import UIKit
 import HealthKit
 import BackgroundTasks
 
-public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate {
+@objc(HealthBgSyncPlugin) public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate {
 
     // MARK: - Configuration State
     internal var baseUrl: String?
@@ -20,7 +20,7 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
     internal var trackedTypes: [HKSampleType] = []
     internal var chunkSize: Int = 1000
     internal var backgroundChunkSize: Int = 100
-    internal var recordsPerChunk: Int = 10000
+    internal var recordsPerChunk: Int = 2000
     
     // Debouncing
     private var pendingSyncWorkItem: DispatchWorkItem?
@@ -51,6 +51,10 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
     private var logEventSink: FlutterEventSink?
     private var logEventChannel: FlutterEventChannel?
 
+    // Background response data buffer
+    internal var backgroundDataBuffer: [Int: Data] = [:]
+    private let bufferLock = NSLock()
+
     // MARK: - API Endpoints
     
     /// Endpoint to upload health data for the current user
@@ -71,7 +75,8 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
     }
 
     // MARK: - Flutter registration
-    public static func register(with registrar: FlutterPluginRegistrar) {
+    @objc public static func register(with registrar: FlutterPluginRegistrar) {
+        NSLog("[HealthBgSyncPlugin] Registering plugin...")
         let channel = FlutterMethodChannel(name: "health_bg_sync", binaryMessenger: registrar.messenger())
         let instance = HealthBgSyncPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
@@ -80,8 +85,8 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
         instance.logEventChannel = logChannel
         logChannel.setStreamHandler(instance)
     }
-
-    public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
+    
+    @objc public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
         HealthBgSyncPlugin.bgCompletionHandler = handler
     }
 
@@ -235,6 +240,18 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
         // Save to Keychain
         HealthBgSyncKeychain.saveCredentials(userId: userId, accessToken: accessToken)
         
+        // Save app credentials for token refresh (optional - only if provided)
+        if let appId = args["appId"] as? String,
+           let appSecret = args["appSecret"] as? String,
+           let baseUrl = args["baseUrl"] as? String {
+            HealthBgSyncKeychain.saveAppCredentials(appId: appId, appSecret: appSecret, baseUrl: baseUrl)
+            logMessage("✅ App credentials saved for refresh")
+        }
+        
+        // Save token expiry (60 minutes from now)
+        let expiresAt = Date().addingTimeInterval(60 * 60)
+        HealthBgSyncKeychain.saveTokenExpiry(expiresAt)
+        
         logMessage("✅ Signed in: userId=\(userId)")
         
         // Retry pending outbox items
@@ -325,6 +342,75 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
     internal func getAccessToken() -> String? {
         return accessToken
     }
+    
+    // MARK: - Token Refresh
+    internal func refreshTokenIfNeeded(completion: @escaping (Bool) -> Void) {
+        // Check if token is expired
+        guard HealthBgSyncKeychain.isTokenExpired() else {
+            completion(true) 
+            return
+        }
+        
+        logMessage("🔄 Token expired, refreshing...")
+        
+        // Check if we have credentials to refresh
+        guard HealthBgSyncKeychain.hasRefreshCredentials(),
+              let appId = HealthBgSyncKeychain.getAppId(),
+              let appSecret = HealthBgSyncKeychain.getAppSecret(),
+              let baseUrl = HealthBgSyncKeychain.getBaseUrl(),
+              let userId = HealthBgSyncKeychain.getUserId() else {
+            logMessage("❌ Missing credentials for token refresh")
+            completion(false)
+            return
+        }
+        
+        
+        let urlString = "\(baseUrl)/api/v1/users/\(userId)/token"
+        guard let url = URL(string: urlString) else {
+            logMessage("❌ Invalid refresh URL")
+            completion(false)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any] = ["app_id": appId, "app_secret": appSecret]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        let task = foregroundSession.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { completion(false); return }
+            
+            if let error = error {
+                self.logMessage("❌ Token refresh failed: \(error.localizedDescription)")
+                completion(false)
+                return
+            }
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200,
+                  let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let newToken = json["access_token"] as? String else {
+                self.logMessage("❌ Token refresh: invalid response")
+                completion(false)
+                return
+            }
+            
+            
+            let fullToken = newToken.hasPrefix("Bearer ") ? newToken : "Bearer \(newToken)"
+            HealthBgSyncKeychain.saveCredentials(userId: userId, accessToken: fullToken)
+            
+            
+            let expiresAt = Date().addingTimeInterval(60 * 60)
+            HealthBgSyncKeychain.saveTokenExpiry(expiresAt)
+            
+            self.logMessage("✅ Token refreshed successfully")
+            completion(true)
+        }
+        task.resume()
+    }
 
     // MARK: - Authorization
     internal func requestAuthorization(completion: @escaping (Bool)->Void) {
@@ -333,9 +419,11 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
             return 
         }
         
-        let toRead = Set(trackedTypes.filter { !($0 is HKCorrelationType) })
+        let types = Set(trackedTypes)
         
-        healthStore.requestAuthorization(toShare: nil, read: toRead) { ok, _ in
+        logMessage("📡 Requesting read/write auth for \(types.count) types")
+        
+        healthStore.requestAuthorization(toShare: types, read: types) { ok, _ in
             DispatchQueue.main.async { completion(ok) }
         }
     }
@@ -344,12 +432,22 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
     internal func syncAll(fullExport: Bool, completion: @escaping ()->Void) {
         guard !trackedTypes.isEmpty else { completion(); return }
         
-        guard accessToken != nil else {
-            logMessage("❌ No access token for sync")
-            completion()
-            return
+        refreshTokenIfNeeded { [weak self] success in
+            guard let self = self else { completion(); return }
+            
+            guard success else {
+                self.logMessage("❌ Token refresh failed, cannot sync")
+                completion()
+                return
+            }
+            
+            guard self.accessToken != nil else {
+                self.logMessage("❌ No access token for sync")
+                completion()
+                return
+            }
+            self.collectAllData(fullExport: fullExport, completion: completion)
         }
-        collectAllData(fullExport: fullExport, completion: completion)
     }
     
     // MARK: - Debounced sync
@@ -581,7 +679,7 @@ public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, 
     
     // MARK: - Logging
     internal func logMessage(_ message: String) {
-        print(message)
+        NSLog("[HealthBgSync] %@", message)
         
         if let sink = logEventSink {
             DispatchQueue.main.async { [weak self] in
