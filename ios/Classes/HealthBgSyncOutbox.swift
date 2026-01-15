@@ -100,8 +100,6 @@ extension HealthBgSyncPlugin {
         
         do {
             try data.write(to: payloadURL, options: Data.WritingOptions.atomic)
-            let fileSizeMB = Double(data.count) / (1024 * 1024)
-            self.logMessage("✅ Payload: \(String(format: "%.2f", fileSizeMB)) MB")
         } catch {
             self.logMessage("❌ Failed to write payload: \(error.localizedDescription)")
             completion(false)
@@ -149,8 +147,8 @@ extension HealthBgSyncPlugin {
         req.httpBody = payloadData
         req.setValue("\(payloadData.count)", forHTTPHeaderField: "Content-Length")
         
-        // Log pretty-printed JSON payload
-        self.logPrettyJSON(payloadData, label: "📤 Request Payload")
+        // Log payload summary (without full data)
+        self.logPayloadSummary(payloadData, label: "📤 Sending")
 
         let task = foregroundSession.dataTask(with: req) { [weak self] data, response, error in
             guard let self = self else { return }
@@ -166,23 +164,22 @@ extension HealthBgSyncPlugin {
             }
             
             if let httpResponse = response as? HTTPURLResponse {
-                self.logMessage("📥 Response: HTTP \(httpResponse.statusCode)")
-                
-                if let data = data {
-                    self.logPrettyJSON(data, label: "📥 Response Body")
-                }
-
                 if (200...299).contains(httpResponse.statusCode) {
-                    self.logMessage("✅ Upload successful")
+                    self.logMessage("✅ HTTP \(httpResponse.statusCode)")
                     
                     self.handleSuccessfulUpload(itemPath: itemURL.path, anchorPath: anchorsURL?.path, wasFullExport: wasFullExport)
                     
                     try? FileManager.default.removeItem(atPath: payloadURL.path)
                     completion(true)
                 } else {
-                    if let data = data {
-                        self.logPrettyJSON(data, label: "⛔️ Upload failed")
+                    // Log error response body for debugging
+                    var errorMsg = "❌ HTTP \(httpResponse.statusCode)"
+                    if let data = data, let errorBody = String(data: data, encoding: .utf8) {
+                        // Truncate error body to avoid huge logs
+                        let truncated = errorBody.count > 200 ? String(errorBody.prefix(200)) + "..." : errorBody
+                        errorMsg += " - \(truncated)"
                     }
+                    self.logMessage(errorMsg)
                     try? FileManager.default.removeItem(atPath: payloadURL.path)
                     completion(false)
                 }

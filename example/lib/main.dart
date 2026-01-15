@@ -12,19 +12,37 @@ void main() async {
   runApp(const MyApp());
 }
 
-// Simple in-memory logs (limited to 1000 entries for performance)
+// Simple in-memory logs (limited to 500 entries for performance)
 final List<String> appLogs = [];
-const int _maxLogEntries = 1000;
+const int _maxLogEntries = 500;
 
-// Notifier to trigger rebuilds when logs change
+// Notifier to trigger rebuilds when logs change (with throttling)
 final logUpdateNotifier = ValueNotifier<int>(0);
+DateTime _lastLogUpdate = DateTime.now();
+bool _pendingUpdate = false;
 
 void _addLog(String message) {
   appLogs.add(message);
   if (appLogs.length > _maxLogEntries) {
     appLogs.removeRange(0, appLogs.length - _maxLogEntries);
   }
-  logUpdateNotifier.value++;
+  
+  // Throttle UI updates to max 5 per second
+  final now = DateTime.now();
+  if (now.difference(_lastLogUpdate).inMilliseconds > 200) {
+    _lastLogUpdate = now;
+    logUpdateNotifier.value++;
+    _pendingUpdate = false;
+  } else if (!_pendingUpdate) {
+    _pendingUpdate = true;
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (_pendingUpdate) {
+        _lastLogUpdate = DateTime.now();
+        logUpdateNotifier.value++;
+        _pendingUpdate = false;
+      }
+    });
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -606,17 +624,35 @@ class LogsPage extends StatefulWidget {
 
 class _LogsPageState extends State<LogsPage> {
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
   String _searchQuery = '';
+  List<String> _cachedFilteredLogs = [];
+  int _lastLogCount = 0;
+  String _lastSearchQuery = '';
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  List<String> get _filteredLogs {
-    if (_searchQuery.isEmpty) return appLogs;
-    return appLogs.where((log) => log.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
+  List<String> _getFilteredLogs() {
+    // Cache filtered logs to avoid recomputing on every build
+    if (_lastLogCount == appLogs.length && _lastSearchQuery == _searchQuery) {
+      return _cachedFilteredLogs;
+    }
+    
+    _lastLogCount = appLogs.length;
+    _lastSearchQuery = _searchQuery;
+    
+    if (_searchQuery.isEmpty) {
+      _cachedFilteredLogs = appLogs.reversed.toList();
+    } else {
+      final query = _searchQuery.toLowerCase();
+      _cachedFilteredLogs = appLogs.reversed.where((log) => log.toLowerCase().contains(query)).toList();
+    }
+    return _cachedFilteredLogs;
   }
 
   @override
@@ -640,86 +676,94 @@ class _LogsPageState extends State<LogsPage> {
             child: const Icon(CupertinoIcons.trash, color: Color(0xFFFF3B30)),
             onPressed: () {
               appLogs.clear();
+              _cachedFilteredLogs = [];
+              _lastLogCount = 0;
               logUpdateNotifier.value++;
             },
           ),
         ],
       ),
-      body: ValueListenableBuilder<int>(
-        valueListenable: logUpdateNotifier,
-        builder: (context, _, __) {
-          final filteredLogs = _filteredLogs;
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: CupertinoSearchTextField(
-                  controller: _searchController,
-                  placeholder: 'Search in logs...',
-                  onChanged: (value) => setState(() => _searchQuery = value),
-                ),
-              ),
-              Expanded(
-                child: appLogs.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(CupertinoIcons.doc_text, size: 48, color: Colors.grey[300]),
-                            const SizedBox(height: 12),
-                            Text('No logs yet', style: TextStyle(fontSize: 17, color: Colors.grey[400])),
-                          ],
-                        ),
-                      )
-                    : filteredLogs.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(CupertinoIcons.search, size: 48, color: Colors.grey[300]),
-                            const SizedBox(height: 12),
-                            Text('No results', style: TextStyle(fontSize: 17, color: Colors.grey[400])),
-                          ],
-                        ),
-                      )
-                    : ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: filteredLogs.length,
-                        separatorBuilder: (context, index) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final log = filteredLogs[filteredLogs.length - 1 - index];
-                          return _LogItem(
-                            log: log,
-                            key: ValueKey('${filteredLogs.length - 1 - index}_${log.hashCode}'),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: CupertinoSearchTextField(
+              controller: _searchController,
+              placeholder: 'Search in logs...',
+              onChanged: (value) => setState(() => _searchQuery = value),
+            ),
+          ),
+          Expanded(
+            child: ValueListenableBuilder<int>(
+              valueListenable: logUpdateNotifier,
+              builder: (context, _, __) {
+                final logs = _getFilteredLogs();
+                
+                if (appLogs.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(CupertinoIcons.doc_text, size: 48, color: Colors.grey[300]),
+                        const SizedBox(height: 12),
+                        Text('No logs yet', style: TextStyle(fontSize: 17, color: Colors.grey[400])),
+                      ],
+                    ),
+                  );
+                }
+                
+                if (logs.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(CupertinoIcons.search, size: 48, color: Colors.grey[300]),
+                        const SizedBox(height: 12),
+                        Text('No results', style: TextStyle(fontSize: 17, color: Colors.grey[400])),
+                      ],
+                    ),
+                  );
+                }
+                
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(16),
+                  itemCount: logs.length,
+                  // Optimize rendering
+                  addAutomaticKeepAlives: false,
+                  addRepaintBoundaries: true,
+                  itemBuilder: (context, index) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _LogItem(log: logs[index]),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-// Extracted log item widget for better performance
+// Simplified log item widget for better performance
 class _LogItem extends StatelessWidget {
   final String log;
 
-  const _LogItem({required this.log, super.key});
+  const _LogItem({required this.log});
 
   @override
   Widget build(BuildContext context) {
-    // Pre-compute these once per item
-    final isError = log.contains('❌') || log.contains('Error');
-    final isSuccess = log.contains('✅');
-
-    final Color dotColor = isError
-        ? const Color(0xFFFF3B30)
-        : isSuccess
-        ? const Color(0xFF34C759)
-        : const Color(0xFFE5E5EA);
+    final Color dotColor;
+    if (log.contains('❌')) {
+      dotColor = const Color(0xFFFF3B30);
+    } else if (log.contains('✅')) {
+      dotColor = const Color(0xFF34C759);
+    } else {
+      dotColor = const Color(0xFFE5E5EA);
+    }
 
     return Container(
       padding: const EdgeInsets.all(12),
