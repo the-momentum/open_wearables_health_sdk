@@ -119,4 +119,21 @@ class MethodChannelHealthBgSync extends HealthBgSyncPlatform {
   Future<void> clearSyncSession() async {
     await _channel.invokeMethod<void>('clearSyncSession');
   }
+
+  @override
+  Future<void> setProvider({required String providerId}) async {
+    await _channel.invokeMethod<void>('setProvider', {
+      'provider': providerId,
+    });
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getAvailableProviders() async {
+    final result = await _channel.invokeMethod<List<Object?>>('getAvailableProviders');
+    if (result == null) return [];
+    return result
+        .whereType<Map<Object?, Object?>>()
+        .map((map) => map.map((key, value) => MapEntry(key as String, value)))
+        .toList();
+  }
 }

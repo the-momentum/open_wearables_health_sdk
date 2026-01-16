@@ -18,6 +18,10 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Samsung Health SDK - place samsung-health-data-api.aar in libs/ folder
+        flatDir {
+            dirs 'libs'
+        }
     }
 }
 
@@ -30,12 +34,12 @@ android {
     compileSdk = 36
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11
+        jvmTarget = "17"
     }
 
     sourceSets {
@@ -44,10 +48,32 @@ android {
     }
 
     defaultConfig {
-        minSdk = 24
+        // Samsung Health SDK requires Android 10+ (API 29)
+        minSdk = 29
     }
 
     dependencies {
+        // Samsung Health Data SDK - download from Samsung Developer Portal
+        // Place samsung-health-data-api.aar in android/libs/ folder
+        implementation(fileTree(dir: 'libs', include: ['*.aar']))
+        
+        // Kotlin Coroutines
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+        
+        // WorkManager for background sync
+        implementation("androidx.work:work-runtime-ktx:2.9.0")
+        
+        // Security for EncryptedSharedPreferences
+        implementation("androidx.security:security-crypto:1.1.0-alpha06")
+        
+        // Gson for JSON serialization
+        implementation("com.google.code.gson:gson:2.10.1")
+        
+        // OkHttp for network requests
+        implementation("com.squareup.okhttp3:okhttp:4.12.0")
+        
+        // Testing
         testImplementation("org.jetbrains.kotlin:kotlin-test")
         testImplementation("org.mockito:mockito-core:5.0.0")
     }

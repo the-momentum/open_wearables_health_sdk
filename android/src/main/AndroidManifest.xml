@@ -1,3 +1,35 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="com.momentum.health.export.health_bg_sync">
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.momentum.health.export.health_bg_sync">
+
+    <!-- Network permissions for syncing data -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Foreground service for background sync -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+
+    <!-- Wake lock for background processing -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Required for scheduling background work -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Samsung Health permissions -->
+    <!-- Note: Samsung Health Data SDK handles its own permission requests through the SDK -->
+
+    <application>
+        <!-- WorkManager initialization -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup" />
+        </provider>
+    </application>
+
 </manifest>

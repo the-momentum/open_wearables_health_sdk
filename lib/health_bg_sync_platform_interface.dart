@@ -112,6 +112,23 @@ abstract class HealthBgSyncPlatform extends PlatformInterface {
   Future<void> clearSyncSession() {
     throw UnimplementedError('clearSyncSession() has not been implemented.');
   }
+
+  // MARK: - Provider Selection (Android only)
+
+  /// Sets the health data provider to use on Android.
+  ///
+  /// This has no effect on iOS where HealthKit is the only option.
+  Future<void> setProvider({required String providerId}) {
+    throw UnimplementedError('setProvider() has not been implemented.');
+  }
+
+  /// Returns list of available health providers on the current device.
+  ///
+  /// On iOS, this always returns an empty list (HealthKit is implicit).
+  /// On Android, returns providers that are installed and meet requirements.
+  Future<List<Map<String, dynamic>>> getAvailableProviders() {
+    throw UnimplementedError('getAvailableProviders() has not been implemented.');
+  }
 }
 
 /// NO-OP placeholder.

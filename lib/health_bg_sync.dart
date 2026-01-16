@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:health_bg_sync/health_data_type.dart';
 import 'package:health_bg_sync/src/config.dart';
 import 'package:health_bg_sync/src/exceptions.dart';
+import 'package:health_bg_sync/src/provider.dart';
 import 'package:health_bg_sync/src/status.dart';
 import 'package:health_bg_sync/src/user.dart';
 
@@ -9,6 +12,7 @@ import 'health_bg_sync_platform_interface.dart';
 
 export 'package:health_bg_sync/src/config.dart';
 export 'package:health_bg_sync/src/exceptions.dart';
+export 'package:health_bg_sync/src/provider.dart';
 export 'package:health_bg_sync/src/status.dart';
 export 'package:health_bg_sync/src/user.dart';
 export 'health_bg_sync_method_channel.dart';
@@ -325,6 +329,41 @@ class HealthBgSync {
   /// To fully reset and re-export all data, use [resetAnchors] instead.
   static Future<void> clearSyncSession() async {
     await _platform.clearSyncSession();
+  }
+
+  // MARK: - Provider Selection (Android only)
+
+  /// Sets the health data provider to use on Android.
+  ///
+  /// This has no effect on iOS where HealthKit is the only option.
+  /// Call this before [startBackgroundSync] to use a specific provider.
+  ///
+  /// ```dart
+  /// if (Platform.isAndroid) {
+  ///   await HealthBgSync.setProvider(AndroidHealthProvider.samsungHealth);
+  /// }
+  /// ```
+  static Future<void> setProvider(AndroidHealthProvider provider) async {
+    if (!Platform.isAndroid) return; // No-op on iOS
+    await _platform.setProvider(providerId: provider.id);
+  }
+
+  /// Returns list of available health providers on the current device.
+  ///
+  /// On iOS, this always returns an empty list (HealthKit is implicit).
+  /// On Android, returns providers that are installed and meet requirements.
+  ///
+  /// ```dart
+  /// final providers = await HealthBgSync.getAvailableProviders();
+  /// for (final provider in providers) {
+  ///   print('${provider.displayName} available');
+  /// }
+  /// ```
+  static Future<List<AvailableProvider>> getAvailableProviders() async {
+    if (!Platform.isAndroid) return []; // HealthKit is implicit on iOS
+    
+    final list = await _platform.getAvailableProviders();
+    return list.map((map) => AvailableProvider.fromMap(map)).toList();
   }
 
   // MARK: - Helpers
