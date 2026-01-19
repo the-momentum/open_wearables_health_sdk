@@ -1,10 +1,5 @@
 package com.momentum.health.export.health_bg_sync
 
-import com.samsung.android.sdk.health.data.HealthDataStore
-import com.samsung.android.sdk.health.data.data.HealthDataType
-import com.samsung.android.sdk.health.data.permission.AccessType
-import com.samsung.android.sdk.health.data.permission.Permission
-
 /**
  * Maps Dart health data type identifiers to Samsung Health SDK types.
  * Mirrors the iOS HealthBgSyncTypes implementation.
@@ -147,7 +142,7 @@ object HealthBgSyncTypes {
             "bloodPressure" -> HealthTypeMapping(
                 samsungType = "com.samsung.health.blood_pressure",
                 unit = "mmHg",
-                valueField = "systolic" // Will handle both systolic and diastolic
+                valueField = "systolic"
             )
 
             // Nutrition
@@ -279,14 +274,5 @@ object HealthBgSyncTypes {
             
             else -> "other"
         }
-    }
-
-    /**
-     * Converts a value to the appropriate unit for display/storage.
-     */
-    fun convertToDisplayUnit(value: Double, fromUnit: String, toUnit: String): Double {
-        // For now, assume values are already in correct units
-        // Add conversion logic as needed
-        return value
     }
 }

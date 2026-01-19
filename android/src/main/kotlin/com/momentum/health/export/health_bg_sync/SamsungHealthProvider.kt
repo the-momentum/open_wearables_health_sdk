@@ -6,26 +6,28 @@ import android.content.pm.PackageManager
 import android.util.Log
 import com.samsung.android.sdk.health.data.HealthDataService
 import com.samsung.android.sdk.health.data.HealthDataStore
-import com.samsung.android.sdk.health.data.data.HealthDataType
+import com.samsung.android.sdk.health.data.data.HealthDataPoint
 import com.samsung.android.sdk.health.data.permission.AccessType
 import com.samsung.android.sdk.health.data.permission.Permission
 import com.samsung.android.sdk.health.data.request.DataType
+import com.samsung.android.sdk.health.data.request.LocalTimeFilter
 import com.samsung.android.sdk.health.data.request.ReadDataRequest
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.UUID
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * Samsung Health SDK implementation for health data synchronization.
- * Provides methods to request permissions, read health data, and sync to backend.
+ * 
+ * IMPORTANT: This requires Samsung Health Data SDK .aar file in android/libs/
+ * Download from: https://developer.samsung.com/health/android/overview.html
  */
 class SamsungHealthProvider(
     private val context: Context,
@@ -46,7 +48,6 @@ class SamsungHealthProvider(
                 val pm = context.packageManager
                 val packageInfo = pm.getPackageInfo(SAMSUNG_HEALTH_PACKAGE, 0)
                 
-                // Parse version code
                 val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
                     packageInfo.longVersionCode
                 } else {
@@ -58,6 +59,9 @@ class SamsungHealthProvider(
                 versionCode >= MIN_SAMSUNG_HEALTH_VERSION
             } catch (e: PackageManager.NameNotFoundException) {
                 Log.d(TAG, "Samsung Health not installed")
+                false
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking Samsung Health: ${e.message}")
                 false
             }
         }
@@ -84,13 +88,14 @@ class SamsungHealthProvider(
                 return@withContext false
             }
 
-            val service = HealthDataService.getHealthDataService(context)
-            healthDataStore = service.getHealthDataStore()
+            // Get HealthDataStore from HealthDataService
+            healthDataStore = HealthDataService.getHealthDataStore(context)
             
             log("✅ Samsung Health SDK initialized")
             true
         } catch (e: Exception) {
             log("❌ Failed to initialize Samsung Health: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -100,38 +105,37 @@ class SamsungHealthProvider(
     /**
      * Request read permissions for specified health data types.
      */
-    suspend fun requestPermissions(activity: Activity, types: List<String>): Boolean {
+    suspend fun requestPermissions(activity: Activity, types: List<String>): Boolean = withContext(Dispatchers.IO) {
         trackedTypes = types
         storage.saveTrackedTypes(types)
 
-        return suspendCancellableCoroutine { continuation ->
-            try {
-                val permissions = buildPermissionSet(types)
-                
-                if (permissions.isEmpty()) {
-                    log("⚠️ No valid Samsung Health types to request")
-                    continuation.resume(false)
-                    return@suspendCancellableCoroutine
-                }
-
-                log("📋 Requesting permissions for ${permissions.size} Samsung Health types")
-
-                val store = healthDataStore
-                if (store == null) {
-                    log("❌ Health store not initialized")
-                    continuation.resume(false)
-                    return@suspendCancellableCoroutine
-                }
-
-                store.requestPermissions(permissions.toSet(), activity) { result ->
-                    val grantedCount = result.resultPermissions.count { it.value == true }
-                    log("✅ Granted $grantedCount/${permissions.size} permissions")
-                    continuation.resume(grantedCount == permissions.size)
-                }
-            } catch (e: Exception) {
-                log("❌ Permission request failed: ${e.message}")
-                continuation.resumeWithException(e)
+        try {
+            val permissions = buildPermissionSet(types)
+            
+            if (permissions.isEmpty()) {
+                log("⚠️ No valid Samsung Health types to request")
+                return@withContext false
             }
+
+            log("📋 Requesting permissions for ${permissions.size} Samsung Health types")
+
+            val store = healthDataStore
+            if (store == null) {
+                log("❌ Health store not initialized")
+                return@withContext false
+            }
+
+            // Samsung Health Data SDK uses suspend functions
+            val grantedPermissions = store.requestPermissions(permissions, activity)
+            
+            val grantedCount = grantedPermissions.size
+            log("✅ Granted $grantedCount/${permissions.size} permissions")
+            
+            return@withContext grantedCount == permissions.size
+        } catch (e: Exception) {
+            log("❌ Permission request failed: ${e.message}")
+            e.printStackTrace()
+            return@withContext false
         }
     }
 
@@ -143,7 +147,7 @@ class SamsungHealthProvider(
             val store = healthDataStore ?: return@withContext false
             val permissions = buildPermissionSet(types)
             
-            val granted = store.getGrantedPermissions(permissions.toSet())
+            val granted = store.getGrantedPermissions(permissions)
             granted.size == permissions.size
         } catch (e: Exception) {
             log("❌ Failed to check permissions: ${e.message}")
@@ -151,16 +155,28 @@ class SamsungHealthProvider(
         }
     }
 
-    private fun buildPermissionSet(types: List<String>): List<Permission> {
-        val samsungTypes = HealthBgSyncTypes.getUniqueSamsungTypes(types)
-        return samsungTypes.mapNotNull { type ->
+    private fun buildPermissionSet(types: List<String>): Set<Permission> {
+        val permissions = mutableSetOf<Permission>()
+        
+        for (dartType in types) {
             try {
-                Permission(DataType(type), AccessType.READ)
+                when (dartType) {
+                    "steps" -> permissions.add(Permission.of(DataType.StepsType, AccessType.READ))
+                    "heartRate", "restingHeartRate" -> permissions.add(Permission.of(DataType.HeartRateType, AccessType.READ))
+                    "sleep" -> permissions.add(Permission.of(DataType.SleepType, AccessType.READ))
+                    "workout", "activeEnergy" -> permissions.add(Permission.of(DataType.ExerciseType, AccessType.READ))
+                    "bloodGlucose" -> permissions.add(Permission.of(DataType.BloodGlucoseType, AccessType.READ))
+                    "oxygenSaturation" -> permissions.add(Permission.of(DataType.BloodOxygenType, AccessType.READ))
+                    "bloodPressure", "bloodPressureSystolic", "bloodPressureDiastolic" -> 
+                        permissions.add(Permission.of(DataType.BloodPressureType, AccessType.READ))
+                    "flightsClimbed" -> permissions.add(Permission.of(DataType.FloorsClimbedType, AccessType.READ))
+                }
             } catch (e: Exception) {
-                log("⚠️ Unknown Samsung Health type: $type")
-                null
+                log("⚠️ Error creating permission for $dartType: ${e.message}")
             }
         }
+        
+        return permissions
     }
 
     // MARK: - Data Reading
@@ -183,20 +199,25 @@ class SamsungHealthProvider(
         val records = mutableListOf<JSONObject>()
         val workouts = mutableListOf<JSONObject>()
         val newAnchors = mutableMapOf<String, String>()
+        
+        // Track which Samsung types we've already processed
+        val processedTypes = mutableSetOf<String>()
 
         for (dartType in types) {
-            val mapping = HealthBgSyncTypes.mapType(dartType) ?: continue
-            
             try {
-                val result = readDataType(
+                // Skip if we already processed this Samsung type
+                val samsungType = getSamsungTypeName(dartType) ?: continue
+                if (samsungType in processedTypes) continue
+                processedTypes.add(samsungType)
+                
+                val result = readDataForType(
                     store = store,
                     dartType = dartType,
-                    mapping = mapping,
                     fullExport = fullExport,
                     userKey = userKey
                 )
                 
-                if (mapping.samsungType == "com.samsung.health.exercise") {
+                if (dartType == "workout" || dartType == "activeEnergy") {
                     workouts.addAll(result.items)
                 } else {
                     records.addAll(result.items)
@@ -211,6 +232,7 @@ class SamsungHealthProvider(
                 }
             } catch (e: Exception) {
                 log("⚠️ Failed to read $dartType: ${e.message}")
+                e.printStackTrace()
             }
         }
 
@@ -218,201 +240,279 @@ class SamsungHealthProvider(
         SyncResult(records, workouts, newAnchors)
     }
 
-    private suspend fun readDataType(
+    private fun getSamsungTypeName(dartType: String): String? {
+        return when (dartType) {
+            "steps" -> "steps"
+            "heartRate", "restingHeartRate" -> "heartRate"
+            "sleep" -> "sleep"
+            "workout", "activeEnergy" -> "exercise"
+            "bloodGlucose" -> "bloodGlucose"
+            "oxygenSaturation" -> "bloodOxygen"
+            "bloodPressure", "bloodPressureSystolic", "bloodPressureDiastolic" -> "bloodPressure"
+            "flightsClimbed" -> "floorsClimbed"
+            else -> null
+        }
+    }
+
+    private suspend fun readDataForType(
         store: HealthDataStore,
         dartType: String,
-        mapping: HealthBgSyncTypes.HealthTypeMapping,
         fullExport: Boolean,
         userKey: String
-    ): DataTypeResult = suspendCancellableCoroutine { continuation ->
+    ): DataTypeResult {
+        // Get anchor if not full export
+        val anchorTime = if (fullExport) {
+            null
+        } else {
+            storage.getAnchor(dartType, userKey)?.toLongOrNull()
+        }
+
+        // Calculate time range
+        val endTime = LocalDateTime.now()
+        val startTime = if (anchorTime != null) {
+            LocalDateTime.ofInstant(Instant.ofEpochMilli(anchorTime), ZoneId.systemDefault())
+        } else {
+            // Full export - read last 365 days
+            endTime.minusDays(365)
+        }
+
+        val timeFilter = LocalTimeFilter.of(startTime, endTime)
+        val items = mutableListOf<JSONObject>()
+        var latestTime = anchorTime ?: 0L
+
         try {
-            val dataType = DataType(mapping.samsungType)
-            
-            // Get anchor if not full export
-            val anchorTime = if (fullExport) {
-                null
-            } else {
-                storage.getAnchor(dartType, userKey)?.toLongOrNull()
-            }
-            
-            // Build request
-            val requestBuilder = ReadDataRequest.Builder(dataType)
-            
-            if (anchorTime != null) {
-                // Read from anchor time
-                requestBuilder.setStartTime(Instant.ofEpochMilli(anchorTime))
-            } else {
-                // Full export - read last 365 days
-                val startTime = Instant.now().minusSeconds(365L * 24 * 60 * 60)
-                requestBuilder.setStartTime(startTime)
-            }
-            
-            requestBuilder.setEndTime(Instant.now())
-            
-            val request = requestBuilder.build()
-            
-            store.readData(request) { result ->
-                try {
-                    val items = mutableListOf<JSONObject>()
-                    var latestTime = anchorTime ?: 0L
+            when (dartType) {
+                "steps" -> {
+                    val request = ReadDataRequest.Builder(DataType.StepsType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
                     
-                    for (data in result.dataList) {
-                        val json = serializeHealthData(data, dartType, mapping)
+                    for (dataPoint in response.dataList) {
+                        val json = createRecordJson(
+                            type = "steps",
+                            value = dataPoint.count.toDouble(),
+                            unit = "count",
+                            startTime = dataPoint.startTime,
+                            endTime = dataPoint.endTime,
+                            source = dataPoint.dataSource?.appPackageName
+                        )
                         items.add(json)
                         
-                        // Track latest timestamp for anchor
-                        val endTime = data.endTime?.toEpochMilli() ?: data.startTime.toEpochMilli()
-                        if (endTime > latestTime) {
-                            latestTime = endTime
-                        }
+                        val time = dataPoint.endTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
                     }
+                }
+                "heartRate", "restingHeartRate" -> {
+                    val request = ReadDataRequest.Builder(DataType.HeartRateType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
                     
-                    val newAnchor = if (items.isNotEmpty()) {
-                        latestTime.toString()
-                    } else {
-                        null
+                    for (dataPoint in response.dataList) {
+                        val json = createRecordJson(
+                            type = "heartRate",
+                            value = dataPoint.heartRate.toDouble(),
+                            unit = "bpm",
+                            startTime = dataPoint.startTime,
+                            endTime = dataPoint.endTime,
+                            source = dataPoint.dataSource?.appPackageName
+                        )
+                        items.add(json)
+                        
+                        val time = dataPoint.endTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
                     }
+                }
+                "sleep" -> {
+                    val request = ReadDataRequest.Builder(DataType.SleepType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
                     
-                    continuation.resume(DataTypeResult(items, newAnchor))
-                } catch (e: Exception) {
-                    continuation.resume(DataTypeResult(emptyList(), null))
+                    for (dataPoint in response.dataList) {
+                        val durationMinutes = java.time.Duration.between(
+                            dataPoint.startTime, 
+                            dataPoint.endTime
+                        ).toMinutes()
+                        
+                        val json = createRecordJson(
+                            type = "sleep",
+                            value = durationMinutes.toDouble(),
+                            unit = "min",
+                            startTime = dataPoint.startTime,
+                            endTime = dataPoint.endTime,
+                            source = dataPoint.dataSource?.appPackageName
+                        )
+                        items.add(json)
+                        
+                        val time = dataPoint.endTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
+                    }
+                }
+                "workout", "activeEnergy" -> {
+                    val request = ReadDataRequest.Builder(DataType.ExerciseType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
+                    
+                    for (dataPoint in response.dataList) {
+                        val json = createWorkoutJson(dataPoint)
+                        items.add(json)
+                        
+                        val time = dataPoint.endTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
+                    }
+                }
+                "bloodGlucose" -> {
+                    val request = ReadDataRequest.Builder(DataType.BloodGlucoseType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
+                    
+                    for (dataPoint in response.dataList) {
+                        val json = createRecordJson(
+                            type = "bloodGlucose",
+                            value = dataPoint.bloodGlucose.toDouble(),
+                            unit = "mg/dL",
+                            startTime = dataPoint.time,
+                            endTime = dataPoint.time,
+                            source = dataPoint.dataSource?.appPackageName
+                        )
+                        items.add(json)
+                        
+                        val time = dataPoint.time.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
+                    }
+                }
+                "oxygenSaturation" -> {
+                    val request = ReadDataRequest.Builder(DataType.BloodOxygenType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
+                    
+                    for (dataPoint in response.dataList) {
+                        val json = createRecordJson(
+                            type = "oxygenSaturation",
+                            value = dataPoint.oxygenSaturation.toDouble(),
+                            unit = "%",
+                            startTime = dataPoint.time,
+                            endTime = dataPoint.time,
+                            source = dataPoint.dataSource?.appPackageName
+                        )
+                        items.add(json)
+                        
+                        val time = dataPoint.time.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
+                    }
+                }
+                "bloodPressure", "bloodPressureSystolic", "bloodPressureDiastolic" -> {
+                    val request = ReadDataRequest.Builder(DataType.BloodPressureType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
+                    
+                    for (dataPoint in response.dataList) {
+                        // Add systolic
+                        items.add(createRecordJson(
+                            type = "bloodPressureSystolic",
+                            value = dataPoint.systolic.toDouble(),
+                            unit = "mmHg",
+                            startTime = dataPoint.time,
+                            endTime = dataPoint.time,
+                            source = dataPoint.dataSource?.appPackageName
+                        ))
+                        // Add diastolic
+                        items.add(createRecordJson(
+                            type = "bloodPressureDiastolic",
+                            value = dataPoint.diastolic.toDouble(),
+                            unit = "mmHg",
+                            startTime = dataPoint.time,
+                            endTime = dataPoint.time,
+                            source = dataPoint.dataSource?.appPackageName
+                        ))
+                        
+                        val time = dataPoint.time.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
+                    }
+                }
+                "flightsClimbed" -> {
+                    val request = ReadDataRequest.Builder(DataType.FloorsClimbedType)
+                        .setLocalTimeFilter(timeFilter)
+                        .build()
+                    val response = store.readData(request)
+                    
+                    for (dataPoint in response.dataList) {
+                        val json = createRecordJson(
+                            type = "flightsClimbed",
+                            value = dataPoint.floor.toDouble(),
+                            unit = "count",
+                            startTime = dataPoint.startTime,
+                            endTime = dataPoint.endTime,
+                            source = dataPoint.dataSource?.appPackageName
+                        )
+                        items.add(json)
+                        
+                        val time = dataPoint.endTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        if (time > latestTime) latestTime = time
+                    }
                 }
             }
         } catch (e: Exception) {
-            log("❌ Read error for $dartType: ${e.message}")
-            continuation.resume(DataTypeResult(emptyList(), null))
+            log("❌ Error reading $dartType: ${e.message}")
+            e.printStackTrace()
+        }
+
+        val newAnchor = if (items.isNotEmpty()) latestTime.toString() else null
+        return DataTypeResult(items, newAnchor)
+    }
+
+    private fun createRecordJson(
+        type: String,
+        value: Double,
+        unit: String,
+        startTime: LocalDateTime,
+        endTime: LocalDateTime,
+        source: String?
+    ): JSONObject {
+        return JSONObject().apply {
+            put("uuid", UUID.randomUUID().toString())
+            put("type", type)
+            put("value", value)
+            put("unit", unit)
+            put("startDate", formatTime(startTime))
+            put("endDate", formatTime(endTime))
+            put("sourceName", source ?: "Samsung Health")
+            put("recordMetadata", JSONArray())
         }
     }
 
-    private fun serializeHealthData(
-        data: com.samsung.android.sdk.health.data.data.HealthData,
-        dartType: String,
-        mapping: HealthBgSyncTypes.HealthTypeMapping
-    ): JSONObject {
-        val json = JSONObject()
-        
-        // Generate UUID for this record
-        json.put("uuid", UUID.randomUUID().toString())
-        json.put("type", mapping.samsungType)
-        
-        // Get value based on field name
-        val value = when (mapping.valueField) {
-            "count" -> data.getValue("count")?.toString()?.toDoubleOrNull() ?: 0.0
-            "heart_rate" -> data.getValue("heart_rate")?.toString()?.toDoubleOrNull() ?: 0.0
-            "weight" -> data.getValue("weight")?.toString()?.toDoubleOrNull() ?: 0.0
-            "height" -> data.getValue("height")?.toString()?.toDoubleOrNull() ?: 0.0
-            "spo2" -> data.getValue("spo2")?.toString()?.toDoubleOrNull() ?: 0.0
-            "glucose" -> data.getValue("glucose")?.toString()?.toDoubleOrNull() ?: 0.0
-            "systolic" -> data.getValue("systolic")?.toString()?.toDoubleOrNull() ?: 0.0
-            "diastolic" -> data.getValue("diastolic")?.toString()?.toDoubleOrNull() ?: 0.0
-            "calorie" -> data.getValue("calorie")?.toString()?.toDoubleOrNull() ?: 0.0
-            "distance" -> data.getValue("distance")?.toString()?.toDoubleOrNull() ?: 0.0
-            "duration" -> data.getValue("duration")?.toString()?.toDoubleOrNull() ?: 0.0
-            else -> data.getValue(mapping.valueField)?.toString()?.toDoubleOrNull() ?: 0.0
-        }
-        
-        json.put("value", value)
-        json.put("unit", mapping.unit)
-        
-        // Timestamps
-        json.put("startDate", isoFormatter.format(data.startTime.atOffset(ZoneOffset.UTC)))
-        data.endTime?.let {
-            json.put("endDate", isoFormatter.format(it.atOffset(ZoneOffset.UTC)))
-        } ?: json.put("endDate", isoFormatter.format(data.startTime.atOffset(ZoneOffset.UTC)))
-        
-        // Source
-        json.put("sourceName", data.packageName ?: "Samsung Health")
-        
-        // Metadata
-        val metadata = JSONArray()
-        data.metadata?.forEach { (key, value) ->
-            val meta = JSONObject()
-            meta.put("key", key)
-            meta.put("value", value.toString())
-            metadata.put(meta)
-        }
-        json.put("recordMetadata", metadata)
-        
-        return json
-    }
-
-    /**
-     * Serialize workout data to JSON.
-     */
-    fun serializeWorkout(
-        data: com.samsung.android.sdk.health.data.data.HealthData
-    ): JSONObject {
-        val json = JSONObject()
-        
-        json.put("uuid", UUID.randomUUID().toString())
-        
-        // Workout type
-        val exerciseType = data.getValue("exercise_type")?.toString()?.toIntOrNull() ?: 0
-        json.put("type", HealthBgSyncTypes.mapWorkoutType(exerciseType))
-        
-        // Timestamps
-        json.put("startDate", isoFormatter.format(data.startTime.atOffset(ZoneOffset.UTC)))
-        data.endTime?.let {
-            json.put("endDate", isoFormatter.format(it.atOffset(ZoneOffset.UTC)))
-        }
-        
-        json.put("sourceName", data.packageName ?: "Samsung Health")
-        
-        // Workout statistics
+    private fun createWorkoutJson(dataPoint: HealthDataPoint): JSONObject {
         val stats = JSONArray()
         
         // Duration
-        val duration = data.getValue("duration")?.toString()?.toDoubleOrNull()
-        if (duration != null) {
-            val durationStat = JSONObject()
-            durationStat.put("type", "duration")
-            durationStat.put("value", duration / 1000.0) // Convert ms to seconds
-            durationStat.put("unit", "s")
-            stats.put(durationStat)
+        val durationSeconds = java.time.Duration.between(
+            dataPoint.startTime, 
+            dataPoint.endTime
+        ).seconds
+        stats.put(JSONObject().apply {
+            put("type", "duration")
+            put("value", durationSeconds)
+            put("unit", "s")
+        })
+        
+        return JSONObject().apply {
+            put("uuid", UUID.randomUUID().toString())
+            put("type", "workout")
+            put("startDate", formatTime(dataPoint.startTime))
+            put("endDate", formatTime(dataPoint.endTime))
+            put("sourceName", dataPoint.dataSource?.appPackageName ?: "Samsung Health")
+            put("workoutStatistics", stats)
         }
-        
-        // Calories
-        val calories = data.getValue("calorie")?.toString()?.toDoubleOrNull()
-        if (calories != null) {
-            val calStat = JSONObject()
-            calStat.put("type", "activeEnergyBurned")
-            calStat.put("value", calories)
-            calStat.put("unit", "kcal")
-            stats.put(calStat)
-        }
-        
-        // Distance
-        val distance = data.getValue("distance")?.toString()?.toDoubleOrNull()
-        if (distance != null) {
-            val distStat = JSONObject()
-            distStat.put("type", "distance")
-            distStat.put("value", distance)
-            distStat.put("unit", "m")
-            stats.put(distStat)
-        }
-        
-        // Heart rate
-        val avgHr = data.getValue("mean_heart_rate")?.toString()?.toDoubleOrNull()
-        if (avgHr != null) {
-            val hrStat = JSONObject()
-            hrStat.put("type", "averageHeartRate")
-            hrStat.put("value", avgHr)
-            hrStat.put("unit", "bpm")
-            stats.put(hrStat)
-        }
-        
-        val maxHr = data.getValue("max_heart_rate")?.toString()?.toDoubleOrNull()
-        if (maxHr != null) {
-            val hrStat = JSONObject()
-            hrStat.put("type", "maxHeartRate")
-            hrStat.put("value", maxHr)
-            hrStat.put("unit", "bpm")
-            stats.put(hrStat)
-        }
-        
-        json.put("workoutStatistics", stats)
-        
-        return json
+    }
+
+    private fun formatTime(time: LocalDateTime): String {
+        return isoFormatter.format(time.toInstant(ZoneOffset.UTC))
     }
 
     // MARK: - Cleanup
