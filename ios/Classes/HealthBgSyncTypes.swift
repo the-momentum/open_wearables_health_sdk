@@ -7,7 +7,9 @@ extension HealthBgSyncPlugin {
     // Builds payload in the SAME shape as your Flutter-side export:
     // {
     //   "data": {
-    //     "records": [ ... _mapRecord(...) or _mapWorkout(...) ... ]
+    //     "workouts": [ ... workout samples ... ],
+    //     "records": [ ... quantity/category samples (non-sleep) ... ],
+    //     "sleep": [ ... sleep analysis samples ... ]
     //   }
     // }
     internal func serialize(samples: [HKSample], type: HKSampleType) -> [String: Any] {
@@ -50,6 +52,7 @@ extension HealthBgSyncPlugin {
     internal func serializeCombinedStreaming(samples: [HKSample]) -> [String: Any] {
         var workouts: [[String: Any]] = []
         var records: [[String: Any]] = []
+        var sleep: [[String: Any]] = []
         
         // Reuse date formatter to avoid repeated allocations
         let dateFormatter = ISO8601DateFormatter()
@@ -67,7 +70,12 @@ extension HealthBgSyncPlugin {
                     } else if let q = s as? HKQuantitySample {
                         records.append(_mapQuantityEfficient(q, dateFormatter: dateFormatter))
                     } else if let c = s as? HKCategorySample {
-                        records.append(_mapCategoryEfficient(c, dateFormatter: dateFormatter))
+                        // Check if this is sleep data
+                        if c.categoryType.identifier == HKCategoryTypeIdentifier.sleepAnalysis.rawValue {
+                            sleep.append(_mapCategoryEfficient(c, dateFormatter: dateFormatter))
+                        } else {
+                            records.append(_mapCategoryEfficient(c, dateFormatter: dateFormatter))
+                        }
                     } else if let corr = s as? HKCorrelation {
                         records.append(contentsOf: _mapCorrelationEfficient(corr, dateFormatter: dateFormatter))
                     } else {
@@ -89,7 +97,8 @@ extension HealthBgSyncPlugin {
         return [
             "data": [
                 "workouts": workouts,
-                "records": records
+                "records": records,
+                "sleep": sleep
             ]
         ]
     }
@@ -98,6 +107,7 @@ extension HealthBgSyncPlugin {
     internal func serializeCombined(samples: [HKSample], anchors: [String: HKQueryAnchor]) -> [String: Any] {
         var workouts: [[String: Any]] = []
         var records: [[String: Any]] = []
+        var sleep: [[String: Any]] = []
         
         for s in samples {
             if let w = s as? HKWorkout {
@@ -106,7 +116,12 @@ extension HealthBgSyncPlugin {
             } else if let q = s as? HKQuantitySample {
                 records.append(_mapQuantity(q))
             } else if let c = s as? HKCategorySample {
-                records.append(_mapCategory(c))
+                // Check if this is sleep data
+                if c.categoryType.identifier == HKCategoryTypeIdentifier.sleepAnalysis.rawValue {
+                    sleep.append(_mapCategory(c))
+                } else {
+                    records.append(_mapCategory(c))
+                }
             } else if let corr = s as? HKCorrelation {
                 // Optional: flatten correlations (e.g., blood pressure S/D)
                 records.append(contentsOf: _mapCorrelation(corr))
@@ -128,7 +143,8 @@ extension HealthBgSyncPlugin {
         return [
             "data": [
                 "workouts": workouts,
-                "records": records
+                "records": records,
+                "sleep": sleep
             ]
         ]
     }
