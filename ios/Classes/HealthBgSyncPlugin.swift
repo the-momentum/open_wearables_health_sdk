@@ -948,6 +948,30 @@ import Network
         }
     }
     
+    /// Logs full payload JSON to Xcode console only (NOT to Flutter event sink)
+    /// Use this for debugging - payloads can be very large
+    internal func logPayloadToConsole(_ data: Data, label: String) {
+        #if DEBUG
+        if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
+           let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted, .sortedKeys]),
+           let prettyString = String(data: prettyData, encoding: .utf8) {
+            NSLog("[HealthBgSync] ========== %@ PAYLOAD START ==========", label)
+            // Split into chunks because NSLog has a limit (~1000 chars)
+            let chunkSize = 800
+            var index = prettyString.startIndex
+            while index < prettyString.endIndex {
+                let endIndex = prettyString.index(index, offsetBy: chunkSize, limitedBy: prettyString.endIndex) ?? prettyString.endIndex
+                let chunk = String(prettyString[index..<endIndex])
+                NSLog("[HealthBgSync] %@", chunk)
+                index = endIndex
+            }
+            NSLog("[HealthBgSync] ========== %@ PAYLOAD END (%d bytes) ==========", label, data.count)
+        } else {
+            NSLog("[HealthBgSync] %@: Failed to pretty-print payload (%d bytes)", label, data.count)
+        }
+        #endif
+    }
+    
     /// Logs a summary of the payload (types and counts) without the full data
     internal func logPayloadSummary(_ data: Data, label: String) {
         guard let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
