@@ -147,8 +147,11 @@ extension HealthBgSyncPlugin {
         req.httpBody = payloadData
         req.setValue("\(payloadData.count)", forHTTPHeaderField: "Content-Length")
         
-        // Log payload summary (without full data)
+        // Log payload summary (without full data) - goes to Flutter app
         self.logPayloadSummary(payloadData, label: "📤 Sending")
+        
+        // Log full payload to Xcode console only (DEBUG builds)
+        self.logPayloadToConsole(payloadData, label: "📤 UPLOAD")
 
         let task = foregroundSession.dataTask(with: req) { [weak self] data, response, error in
             guard let self = self else { return }
