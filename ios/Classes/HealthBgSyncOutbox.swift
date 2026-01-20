@@ -235,6 +235,17 @@ extension HealthBgSyncPlugin {
         try? FileManager.default.removeItem(atPath: itemPath)
     }
 
+    // MARK: - Clear outbox
+    internal func clearOutbox() {
+        let dir = outboxDir()
+        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+            for file in files {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+        logMessage("🧹 Cleared outbox")
+    }
+
     // MARK: - Retry pending items
     internal func retryOutboxIfPossible() {
         guard let endpoint = self.syncEndpoint, let token = self.accessToken else { return }

@@ -170,6 +170,16 @@ import Network
 
         case "resetAnchors":
             self.resetAllAnchors()
+            self.clearSyncSession()
+            self.clearOutbox()
+            logMessage("🔄 Anchors reset - will perform full sync on next sync")
+            // If sync is active, trigger a new full sync
+            if HealthBgSyncKeychain.isSyncActive() && self.accessToken != nil {
+                logMessage("🔄 Triggering full export after reset...")
+                self.syncAll(fullExport: true) {
+                    self.logMessage("✅ Full export after reset completed")
+                }
+            }
             result(nil)
             
         case "getSyncStatus":
@@ -320,8 +330,19 @@ import Network
         stopNetworkMonitoring()
         cancelAllBGTasks()
         
-        // Clear Keychain
+        // Reset anchors and fullDone flag BEFORE clearing keychain (need userId)
+        resetAllAnchors()
+        
+        // Clear sync session state
+        clearSyncSession()
+        
+        // Clear outbox
+        clearOutbox()
+        
+        // Clear Keychain (this removes userId, accessToken, etc.)
         HealthBgSyncKeychain.clearAll()
+        
+        logMessage("✅ Sign out complete - all sync state reset")
         
         result(nil)
     }

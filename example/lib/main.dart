@@ -26,7 +26,7 @@ void _addLog(String message) {
   if (appLogs.length > _maxLogEntries) {
     appLogs.removeRange(0, appLogs.length - _maxLogEntries);
   }
-  
+
   // Throttle UI updates to max 5 per second
   final now = DateTime.now();
   if (now.difference(_lastLogUpdate).inMilliseconds > 200) {
@@ -642,10 +642,10 @@ class _LogsPageState extends State<LogsPage> {
     if (_lastLogCount == appLogs.length && _lastSearchQuery == _searchQuery) {
       return _cachedFilteredLogs;
     }
-    
+
     _lastLogCount = appLogs.length;
     _lastSearchQuery = _searchQuery;
-    
+
     if (_searchQuery.isEmpty) {
       _cachedFilteredLogs = appLogs.reversed.toList();
     } else {
@@ -698,7 +698,7 @@ class _LogsPageState extends State<LogsPage> {
               valueListenable: logUpdateNotifier,
               builder: (context, _, __) {
                 final logs = _getFilteredLogs();
-                
+
                 if (appLogs.isEmpty) {
                   return Center(
                     child: Column(
@@ -711,7 +711,7 @@ class _LogsPageState extends State<LogsPage> {
                     ),
                   );
                 }
-                
+
                 if (logs.isEmpty) {
                   return Center(
                     child: Column(
@@ -724,7 +724,7 @@ class _LogsPageState extends State<LogsPage> {
                     ),
                   );
                 }
-                
+
                 return ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.all(16),
