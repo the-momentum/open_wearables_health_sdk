@@ -361,11 +361,24 @@ extension HealthBgSyncPlugin {
         
         if #available(iOS 16.0, *) {
             // iOS 16+ - use statistics(for:) API
+            
+            // Active energy burned
             if let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
                let energyStats = w.statistics(for: energyType),
                let sum = energyStats.sumQuantity() {
                 stats.append([
                     "type": "activeEnergyBurned",
+                    "value": sum.doubleValue(for: .kilocalorie()),
+                    "unit": "kcal"
+                ])
+            }
+            
+            // Basal energy burned
+            if let basalType = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned),
+               let basalStats = w.statistics(for: basalType),
+               let sum = basalStats.sumQuantity() {
+                stats.append([
+                    "type": "basalEnergyBurned",
                     "value": sum.doubleValue(for: .kilocalorie()),
                     "unit": "kcal"
                 ])
@@ -391,9 +404,38 @@ extension HealthBgSyncPlugin {
                 }
             }
             
+            // Step count during workout
+            if let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount),
+               let stepStats = w.statistics(for: stepType),
+               let sum = stepStats.sumQuantity() {
+                stats.append([
+                    "type": "stepCount",
+                    "value": sum.doubleValue(for: .count()),
+                    "unit": "count"
+                ])
+            }
+            
+            // Swimming stroke count
+            if let strokeType = HKQuantityType.quantityType(forIdentifier: .swimmingStrokeCount),
+               let strokeStats = w.statistics(for: strokeType),
+               let sum = strokeStats.sumQuantity() {
+                stats.append([
+                    "type": "swimmingStrokeCount",
+                    "value": sum.doubleValue(for: .count()),
+                    "unit": "count"
+                ])
+            }
+            
             // Heart rate statistics
             if let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
                let hrStats = w.statistics(for: hrType) {
+                if let min = hrStats.minimumQuantity() {
+                    stats.append([
+                        "type": "minHeartRate",
+                        "value": min.doubleValue(for: HKUnit.count().unitDivided(by: .minute())),
+                        "unit": "bpm"
+                    ])
+                }
                 if let avg = hrStats.averageQuantity() {
                     stats.append([
                         "type": "averageHeartRate",
@@ -410,12 +452,54 @@ extension HealthBgSyncPlugin {
                 }
             }
             
-            // Elevation gain - from metadata
-            if let elevationAscended = w.metadata?[HKMetadataKeyElevationAscended] as? HKQuantity {
+            // Running metrics (iOS 16+)
+            if let powerType = HKQuantityType.quantityType(forIdentifier: .runningPower),
+               let powerStats = w.statistics(for: powerType),
+               let avg = powerStats.averageQuantity() {
                 stats.append([
-                    "type": "elevationGain",
-                    "value": elevationAscended.doubleValue(for: .meter()),
+                    "type": "averageRunningPower",
+                    "value": avg.doubleValue(for: .watt()),
+                    "unit": "W"
+                ])
+            }
+            
+            if let speedType = HKQuantityType.quantityType(forIdentifier: .runningSpeed),
+               let speedStats = w.statistics(for: speedType),
+               let avg = speedStats.averageQuantity() {
+                stats.append([
+                    "type": "averageRunningSpeed",
+                    "value": avg.doubleValue(for: HKUnit.meter().unitDivided(by: .second())),
+                    "unit": "m/s"
+                ])
+            }
+            
+            if let strideType = HKQuantityType.quantityType(forIdentifier: .runningStrideLength),
+               let strideStats = w.statistics(for: strideType),
+               let avg = strideStats.averageQuantity() {
+                stats.append([
+                    "type": "averageRunningStrideLength",
+                    "value": avg.doubleValue(for: .meter()),
                     "unit": "m"
+                ])
+            }
+            
+            if let oscType = HKQuantityType.quantityType(forIdentifier: .runningVerticalOscillation),
+               let oscStats = w.statistics(for: oscType),
+               let avg = oscStats.averageQuantity() {
+                stats.append([
+                    "type": "averageVerticalOscillation",
+                    "value": avg.doubleValue(for: .meterUnit(with: .centi)),
+                    "unit": "cm"
+                ])
+            }
+            
+            if let gctType = HKQuantityType.quantityType(forIdentifier: .runningGroundContactTime),
+               let gctStats = w.statistics(for: gctType),
+               let avg = gctStats.averageQuantity() {
+                stats.append([
+                    "type": "averageGroundContactTime",
+                    "value": avg.doubleValue(for: .secondUnit(with: .milli)),
+                    "unit": "ms"
                 ])
             }
             
@@ -435,6 +519,87 @@ extension HealthBgSyncPlugin {
                     "unit": "m"
                 ])
             }
+        }
+        
+        // Metadata-based statistics (available on all iOS versions)
+        if let elevationAscended = w.metadata?[HKMetadataKeyElevationAscended] as? HKQuantity {
+            stats.append([
+                "type": "elevationAscended",
+                "value": elevationAscended.doubleValue(for: .meter()),
+                "unit": "m"
+            ])
+        }
+        
+        if let elevationDescended = w.metadata?[HKMetadataKeyElevationDescended] as? HKQuantity {
+            stats.append([
+                "type": "elevationDescended",
+                "value": elevationDescended.doubleValue(for: .meter()),
+                "unit": "m"
+            ])
+        }
+        
+        if let avgSpeed = w.metadata?[HKMetadataKeyAverageSpeed] as? HKQuantity {
+            stats.append([
+                "type": "averageSpeed",
+                "value": avgSpeed.doubleValue(for: HKUnit.meter().unitDivided(by: .second())),
+                "unit": "m/s"
+            ])
+        }
+        
+        if let maxSpeed = w.metadata?[HKMetadataKeyMaximumSpeed] as? HKQuantity {
+            stats.append([
+                "type": "maxSpeed",
+                "value": maxSpeed.doubleValue(for: HKUnit.meter().unitDivided(by: .second())),
+                "unit": "m/s"
+            ])
+        }
+        
+        if let avgMETs = w.metadata?[HKMetadataKeyAverageMETs] as? HKQuantity {
+            stats.append([
+                "type": "averageMETs",
+                "value": avgMETs.doubleValue(for: HKUnit.kilocalorie().unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .hour()))),
+                "unit": "kcal/kg/hr"
+            ])
+        }
+        
+        if let lapLength = w.metadata?[HKMetadataKeyLapLength] as? HKQuantity {
+            stats.append([
+                "type": "lapLength",
+                "value": lapLength.doubleValue(for: .meter()),
+                "unit": "m"
+            ])
+        }
+        
+        if let swimmingLocationType = w.metadata?[HKMetadataKeySwimmingLocationType] as? NSNumber {
+            stats.append([
+                "type": "swimmingLocationType",
+                "value": swimmingLocationType.intValue, // 1 = pool, 2 = open water
+                "unit": "enum"
+            ])
+        }
+        
+        if let indoorWorkout = w.metadata?[HKMetadataKeyIndoorWorkout] as? Bool {
+            stats.append([
+                "type": "indoorWorkout",
+                "value": indoorWorkout ? 1 : 0,
+                "unit": "bool"
+            ])
+        }
+        
+        if let weatherTemp = w.metadata?[HKMetadataKeyWeatherTemperature] as? HKQuantity {
+            stats.append([
+                "type": "weatherTemperature",
+                "value": weatherTemp.doubleValue(for: .degreeCelsius()),
+                "unit": "degC"
+            ])
+        }
+        
+        if let weatherHumidity = w.metadata?[HKMetadataKeyWeatherHumidity] as? HKQuantity {
+            stats.append([
+                "type": "weatherHumidity",
+                "value": weatherHumidity.doubleValue(for: .percent()),
+                "unit": "%"
+            ])
         }
 
         return [
@@ -750,6 +915,7 @@ extension HealthBgSyncPlugin {
         ])
         
         if #available(iOS 16.0, *) {
+            // Active energy burned
             if let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
                let energyStats = w.statistics(for: energyType),
                let sum = energyStats.sumQuantity() {
@@ -760,6 +926,18 @@ extension HealthBgSyncPlugin {
                 ])
             }
             
+            // Basal energy burned
+            if let basalType = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned),
+               let basalStats = w.statistics(for: basalType),
+               let sum = basalStats.sumQuantity() {
+                stats.append([
+                    "type": "basalEnergyBurned",
+                    "value": sum.doubleValue(for: .kilocalorie()),
+                    "unit": "kcal"
+                ])
+            }
+            
+            // Distance
             let distanceTypes: [HKQuantityTypeIdentifier] = [
                 .distanceWalkingRunning,
                 .distanceCycling,
@@ -779,8 +957,38 @@ extension HealthBgSyncPlugin {
                 }
             }
             
+            // Step count during workout
+            if let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount),
+               let stepStats = w.statistics(for: stepType),
+               let sum = stepStats.sumQuantity() {
+                stats.append([
+                    "type": "stepCount",
+                    "value": sum.doubleValue(for: .count()),
+                    "unit": "count"
+                ])
+            }
+            
+            // Swimming stroke count
+            if let strokeType = HKQuantityType.quantityType(forIdentifier: .swimmingStrokeCount),
+               let strokeStats = w.statistics(for: strokeType),
+               let sum = strokeStats.sumQuantity() {
+                stats.append([
+                    "type": "swimmingStrokeCount",
+                    "value": sum.doubleValue(for: .count()),
+                    "unit": "count"
+                ])
+            }
+            
+            // Heart rate statistics
             if let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
                let hrStats = w.statistics(for: hrType) {
+                if let min = hrStats.minimumQuantity() {
+                    stats.append([
+                        "type": "minHeartRate",
+                        "value": min.doubleValue(for: HKUnit.count().unitDivided(by: .minute())),
+                        "unit": "bpm"
+                    ])
+                }
                 if let avg = hrStats.averageQuantity() {
                     stats.append([
                         "type": "averageHeartRate",
@@ -797,15 +1005,59 @@ extension HealthBgSyncPlugin {
                 }
             }
             
-            if let elevationAscended = w.metadata?[HKMetadataKeyElevationAscended] as? HKQuantity {
+            // Running metrics (iOS 16+)
+            if let powerType = HKQuantityType.quantityType(forIdentifier: .runningPower),
+               let powerStats = w.statistics(for: powerType),
+               let avg = powerStats.averageQuantity() {
                 stats.append([
-                    "type": "elevationGain",
-                    "value": elevationAscended.doubleValue(for: .meter()),
+                    "type": "averageRunningPower",
+                    "value": avg.doubleValue(for: .watt()),
+                    "unit": "W"
+                ])
+            }
+            
+            if let speedType = HKQuantityType.quantityType(forIdentifier: .runningSpeed),
+               let speedStats = w.statistics(for: speedType),
+               let avg = speedStats.averageQuantity() {
+                stats.append([
+                    "type": "averageRunningSpeed",
+                    "value": avg.doubleValue(for: HKUnit.meter().unitDivided(by: .second())),
+                    "unit": "m/s"
+                ])
+            }
+            
+            if let strideType = HKQuantityType.quantityType(forIdentifier: .runningStrideLength),
+               let strideStats = w.statistics(for: strideType),
+               let avg = strideStats.averageQuantity() {
+                stats.append([
+                    "type": "averageRunningStrideLength",
+                    "value": avg.doubleValue(for: .meter()),
                     "unit": "m"
                 ])
             }
             
+            if let oscType = HKQuantityType.quantityType(forIdentifier: .runningVerticalOscillation),
+               let oscStats = w.statistics(for: oscType),
+               let avg = oscStats.averageQuantity() {
+                stats.append([
+                    "type": "averageVerticalOscillation",
+                    "value": avg.doubleValue(for: .meterUnit(with: .centi)),
+                    "unit": "cm"
+                ])
+            }
+            
+            if let gctType = HKQuantityType.quantityType(forIdentifier: .runningGroundContactTime),
+               let gctStats = w.statistics(for: gctType),
+               let avg = gctStats.averageQuantity() {
+                stats.append([
+                    "type": "averageGroundContactTime",
+                    "value": avg.doubleValue(for: .secondUnit(with: .milli)),
+                    "unit": "ms"
+                ])
+            }
+            
         } else {
+            // iOS 15 and earlier - use deprecated properties
             if let energy = w.totalEnergyBurned {
                 stats.append([
                     "type": "activeEnergyBurned",
@@ -820,6 +1072,87 @@ extension HealthBgSyncPlugin {
                     "unit": "m"
                 ])
             }
+        }
+        
+        // Metadata-based statistics (available on all iOS versions)
+        if let elevationAscended = w.metadata?[HKMetadataKeyElevationAscended] as? HKQuantity {
+            stats.append([
+                "type": "elevationAscended",
+                "value": elevationAscended.doubleValue(for: .meter()),
+                "unit": "m"
+            ])
+        }
+        
+        if let elevationDescended = w.metadata?[HKMetadataKeyElevationDescended] as? HKQuantity {
+            stats.append([
+                "type": "elevationDescended",
+                "value": elevationDescended.doubleValue(for: .meter()),
+                "unit": "m"
+            ])
+        }
+        
+        if let avgSpeed = w.metadata?[HKMetadataKeyAverageSpeed] as? HKQuantity {
+            stats.append([
+                "type": "averageSpeed",
+                "value": avgSpeed.doubleValue(for: HKUnit.meter().unitDivided(by: .second())),
+                "unit": "m/s"
+            ])
+        }
+        
+        if let maxSpeed = w.metadata?[HKMetadataKeyMaximumSpeed] as? HKQuantity {
+            stats.append([
+                "type": "maxSpeed",
+                "value": maxSpeed.doubleValue(for: HKUnit.meter().unitDivided(by: .second())),
+                "unit": "m/s"
+            ])
+        }
+        
+        if let avgMETs = w.metadata?[HKMetadataKeyAverageMETs] as? HKQuantity {
+            stats.append([
+                "type": "averageMETs",
+                "value": avgMETs.doubleValue(for: HKUnit.kilocalorie().unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .hour()))),
+                "unit": "kcal/kg/hr"
+            ])
+        }
+        
+        if let lapLength = w.metadata?[HKMetadataKeyLapLength] as? HKQuantity {
+            stats.append([
+                "type": "lapLength",
+                "value": lapLength.doubleValue(for: .meter()),
+                "unit": "m"
+            ])
+        }
+        
+        if let swimmingLocationType = w.metadata?[HKMetadataKeySwimmingLocationType] as? NSNumber {
+            stats.append([
+                "type": "swimmingLocationType",
+                "value": swimmingLocationType.intValue, // 1 = pool, 2 = open water
+                "unit": "enum"
+            ])
+        }
+        
+        if let indoorWorkout = w.metadata?[HKMetadataKeyIndoorWorkout] as? Bool {
+            stats.append([
+                "type": "indoorWorkout",
+                "value": indoorWorkout ? 1 : 0,
+                "unit": "bool"
+            ])
+        }
+        
+        if let weatherTemp = w.metadata?[HKMetadataKeyWeatherTemperature] as? HKQuantity {
+            stats.append([
+                "type": "weatherTemperature",
+                "value": weatherTemp.doubleValue(for: .degreeCelsius()),
+                "unit": "degC"
+            ])
+        }
+        
+        if let weatherHumidity = w.metadata?[HKMetadataKeyWeatherHumidity] as? HKQuantity {
+            stats.append([
+                "type": "weatherHumidity",
+                "value": weatherHumidity.doubleValue(for: .percent()),
+                "unit": "%"
+            ])
         }
 
         return [
