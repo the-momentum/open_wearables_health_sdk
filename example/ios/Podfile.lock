@@ -1,27 +1,27 @@
 PODS:
   - Flutter (1.0.0)
-  - health_bg_sync (0.0.1):
-    - Flutter
   - integration_test (0.0.1):
+    - Flutter
+  - open_wearables_health_sdk (0.0.1):
     - Flutter
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
-  - health_bg_sync (from `.symlinks/plugins/health_bg_sync/ios`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
+  - open_wearables_health_sdk (from `.symlinks/plugins/open_wearables_health_sdk/ios`)
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
-  health_bg_sync:
-    :path: ".symlinks/plugins/health_bg_sync/ios"
   integration_test:
     :path: ".symlinks/plugins/integration_test/ios"
+  open_wearables_health_sdk:
+    :path: ".symlinks/plugins/open_wearables_health_sdk/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  health_bg_sync: 854c077d3d1182048a7157664b5ed131523ed1bd
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
+  open_wearables_health_sdk: 72f606078e7fa04ef7f8fc331766398adb0ad8f8
 
 PODFILE CHECKSUM: 53a6aebc29ccee84c41f92f409fc20cd4ca011f1
 

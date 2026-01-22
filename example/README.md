@@ -1,6 +1,6 @@
-# health_bg_sync_example
+# open_wearables_health_sdk_example
 
-Demonstrates how to use the health_bg_sync plugin.
+Demonstrates how to use the Open Wearables Health SDK plugin.
 
 ## Getting Started
 

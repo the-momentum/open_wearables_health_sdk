@@ -1,10 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:health_bg_sync/health_bg_sync.dart';
-import 'package:health_bg_sync/health_data_type.dart';
-import 'package:http/http.dart' as http;
+import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
+import 'package:open_wearables_health_sdk/health_data_type.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,7 +23,7 @@ void _addLog(String message) {
   if (appLogs.length > _maxLogEntries) {
     appLogs.removeRange(0, appLogs.length - _maxLogEntries);
   }
-  
+
   // Throttle UI updates to max 5 per second
   final now = DateTime.now();
   if (now.difference(_lastLogUpdate).inMilliseconds > 200) {
@@ -84,9 +81,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final _customUrlController = TextEditingController(text: 'https://api.openwearables.io');
   final _userIdController = TextEditingController();
-  final _appIdController = TextEditingController();
-  final _appSecretController = TextEditingController();
-  final _accessTokenController = TextEditingController();
+  final _tokenController = TextEditingController();
 
   bool _isLoading = false;
   String _statusMessage = '';
@@ -103,7 +98,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _subscribeToNativeLogs() {
-    MethodChannelHealthBgSync.logStream.listen((message) {
+    MethodChannelOpenWearablesHealthSdk.logStream.listen((message) {
       final timestamp = DateTime.now().toIso8601String().split('T').last.split('.').first;
       _addLog('$timestamp $message');
     });
@@ -112,17 +107,15 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _userIdController.dispose();
-    _accessTokenController.dispose();
+    _tokenController.dispose();
     _customUrlController.dispose();
-    _appIdController.dispose();
-    _appSecretController.dispose();
     super.dispose();
   }
 
   Future<void> _autoConfigureOnStartup() async {
     setState(() => _isLoading = true);
     try {
-      final credentials = await HealthBgSync.getStoredCredentials();
+      final credentials = await OpenWearablesHealthSdk.getStoredCredentials();
       final hasUserId = credentials['userId'] != null && (credentials['userId'] as String).isNotEmpty;
       final hasAccessToken = credentials['accessToken'] != null && (credentials['accessToken'] as String).isNotEmpty;
       final wasSyncActive = credentials['isSyncActive'] == true;
@@ -132,13 +125,13 @@ class _HomePageState extends State<HomePage> {
           _userIdController.text = credentials['userId'] as String;
         }
         if (credentials['accessToken'] != null) {
-          _accessTokenController.text = credentials['accessToken'] as String;
+          _tokenController.text = credentials['accessToken'] as String;
         }
       });
 
       if (hasUserId && hasAccessToken && wasSyncActive) {
         final storedCustomUrl = credentials['customSyncUrl'] as String?;
-        await HealthBgSync.configure(environment: HealthBgSyncEnvironment.production, customSyncUrl: storedCustomUrl);
+        await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: storedCustomUrl);
         _checkStatus();
         _setStatus('Session restored');
       }
@@ -149,34 +142,15 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<String?> _fetchToken(String userId, String appId, String appSecret, String baseUrl) async {
-    final url = Uri.parse('$baseUrl/api/v1/users/$userId/token');
-    _setStatus('Fetching token...');
-
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'app_id': appId, 'app_secret': appSecret}),
-    );
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      return data['access_token'];
-    } else {
-      throw Exception('Failed to get token: ${response.statusCode}');
-    }
-  }
-
-  Future<void> _loginWithCredentials() async {
+  Future<void> _loginWithToken() async {
     final userId = _userIdController.text.trim();
-    final appId = _appIdController.text.trim();
-    final appSecret = _appSecretController.text.trim();
+    final token = _tokenController.text.trim();
     final baseUrl = _customUrlController.text.isNotEmpty
         ? _customUrlController.text.trim()
         : 'https://api.openwearables.io';
 
-    if (userId.isEmpty || appId.isEmpty || appSecret.isEmpty) {
-      _setStatus('Please fill all fields');
+    if (userId.isEmpty || token.isEmpty) {
+      _setStatus('Please fill User ID and Token');
       return;
     }
 
@@ -184,25 +158,14 @@ class _HomePageState extends State<HomePage> {
 
     try {
       final fullSyncUrl = '$baseUrl/api/v1/sdk/users/{user_id}/sync/apple/healthion';
-      await HealthBgSync.configure(environment: HealthBgSyncEnvironment.production, customSyncUrl: fullSyncUrl);
+      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
       _checkStatus();
-
-      final token = await _fetchToken(userId, appId, appSecret, baseUrl);
-      if (token == null) {
-        _setStatus('Failed to retrieve token');
-        return;
-      }
-
-      setState(() => _accessTokenController.text = token);
 
       _setStatus('Signing in...');
       final authToken = token.startsWith('Bearer ') ? token : 'Bearer $token';
-      await HealthBgSync.signIn(
+      await OpenWearablesHealthSdk.signIn(
         userId: userId,
         accessToken: authToken,
-        appId: appId,
-        appSecret: appSecret,
-        baseUrl: baseUrl,
       );
 
       _setStatus('Connected successfully');
@@ -216,8 +179,8 @@ class _HomePageState extends State<HomePage> {
 
   void _checkStatus() {
     setState(() {
-      _isSignedIn = HealthBgSync.isSignedIn;
-      _isSyncing = HealthBgSync.isSyncActive;
+      _isSignedIn = OpenWearablesHealthSdk.isSignedIn;
+      _isSyncing = OpenWearablesHealthSdk.isSyncActive;
     });
   }
 
@@ -231,13 +194,13 @@ class _HomePageState extends State<HomePage> {
   Future<void> _signOut() async {
     setState(() => _isLoading = true);
     try {
-      await HealthBgSync.signOut();
+      await OpenWearablesHealthSdk.signOut();
       _setStatus('Signed out');
       _checkStatus();
       setState(() {
         _isAuthorized = false;
         _isSyncing = false;
-        _accessTokenController.clear();
+        _tokenController.clear();
       });
     } catch (e) {
       _setStatus('Error: $e');
@@ -249,7 +212,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _requestAuthorization() async {
     setState(() => _isLoading = true);
     try {
-      final authorized = await HealthBgSync.requestAuthorization(types: HealthDataType.values);
+      final authorized = await OpenWearablesHealthSdk.requestAuthorization(types: HealthDataType.values);
       setState(() => _isAuthorized = authorized);
       _setStatus(authorized ? 'Authorized' : 'Authorization denied');
     } on NotSignedInException {
@@ -264,7 +227,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _startBackgroundSync() async {
     setState(() => _isLoading = true);
     try {
-      final started = await HealthBgSync.startBackgroundSync();
+      final started = await OpenWearablesHealthSdk.startBackgroundSync();
       setState(() => _isSyncing = started);
       _setStatus(started ? 'Sync started' : 'Could not start sync');
     } on NotSignedInException {
@@ -279,7 +242,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _stopBackgroundSync() async {
     setState(() => _isLoading = true);
     try {
-      await HealthBgSync.stopBackgroundSync();
+      await OpenWearablesHealthSdk.stopBackgroundSync();
       setState(() => _isSyncing = false);
       _setStatus('Sync stopped');
     } catch (e) {
@@ -292,7 +255,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _syncNow() async {
     setState(() => _isLoading = true);
     try {
-      await HealthBgSync.syncNow();
+      await OpenWearablesHealthSdk.syncNow();
       _setStatus('Sync triggered');
     } on NotSignedInException {
       _setStatus('Sign in first');
@@ -421,11 +384,9 @@ class _HomePageState extends State<HomePage> {
           ),
           _buildTextField(controller: _userIdController, placeholder: 'User ID', icon: CupertinoIcons.person),
           _buildDivider(),
-          _buildTextField(controller: _appIdController, placeholder: 'App ID', icon: CupertinoIcons.app),
-          _buildDivider(),
           _buildTextField(
-            controller: _appSecretController,
-            placeholder: 'App Secret',
+            controller: _tokenController,
+            placeholder: 'Token',
             icon: CupertinoIcons.lock,
             obscureText: true,
           ),
@@ -436,7 +397,7 @@ class _HomePageState extends State<HomePage> {
             child: SizedBox(
               width: double.infinity,
               child: CupertinoButton.filled(
-                onPressed: _isLoading ? null : _loginWithCredentials,
+                onPressed: _isLoading ? null : _loginWithToken,
                 borderRadius: BorderRadius.circular(12),
                 child: _isLoading
                     ? const CupertinoActivityIndicator(color: Colors.white)
@@ -642,10 +603,10 @@ class _LogsPageState extends State<LogsPage> {
     if (_lastLogCount == appLogs.length && _lastSearchQuery == _searchQuery) {
       return _cachedFilteredLogs;
     }
-    
+
     _lastLogCount = appLogs.length;
     _lastSearchQuery = _searchQuery;
-    
+
     if (_searchQuery.isEmpty) {
       _cachedFilteredLogs = appLogs.reversed.toList();
     } else {
@@ -698,7 +659,7 @@ class _LogsPageState extends State<LogsPage> {
               valueListenable: logUpdateNotifier,
               builder: (context, _, __) {
                 final logs = _getFilteredLogs();
-                
+
                 if (appLogs.isEmpty) {
                   return Center(
                     child: Column(
@@ -711,7 +672,7 @@ class _LogsPageState extends State<LogsPage> {
                     ),
                   );
                 }
-                
+
                 if (logs.isEmpty) {
                   return Center(
                     child: Column(
@@ -724,7 +685,7 @@ class _LogsPageState extends State<LogsPage> {
                     ),
                   );
                 }
-                
+
                 return ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.all(16),
