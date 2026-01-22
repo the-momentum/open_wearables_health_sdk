@@ -4,15 +4,15 @@ import HealthKit
 import BackgroundTasks
 import Network
 
-@objc(HealthBgSyncPlugin) public class HealthBgSyncPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate {
+@objc(OpenWearablesHealthSdkPlugin) public class OpenWearablesHealthSdkPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate {
 
     // MARK: - Configuration State
     internal var baseUrl: String?
     internal var customSyncUrl: String?
     
     // MARK: - User State (loaded from Keychain)
-    internal var userId: String? { HealthBgSyncKeychain.getUserId() }
-    internal var accessToken: String? { HealthBgSyncKeychain.getAccessToken() }
+    internal var userId: String? { OpenWearablesHealthSdkKeychain.getUserId() }
+    internal var accessToken: String? { OpenWearablesHealthSdkKeychain.getAccessToken() }
     
     // MARK: - HealthKit State
     internal let healthStore = HKHealthStore()
@@ -39,17 +39,17 @@ import Network
     private var wasDisconnected = false
 
     // Per-user state (anchors)
-    internal let defaults = UserDefaults(suiteName: "com.healthbgsync.state") ?? .standard
+    internal let defaults = UserDefaults(suiteName: "com.openwearables.healthsdk.state") ?? .standard
 
     // Observer queries
     internal var activeObserverQueries: [HKObserverQuery] = []
 
     // Background session
-    internal let bgSessionId = "com.healthbgsync.upload.session"
+    internal let bgSessionId = "com.openwearables.healthsdk.upload.session"
 
     // BGTask identifiers
-    internal let refreshTaskId  = "com.healthbgsync.task.refresh"
-    internal let processTaskId  = "com.healthbgsync.task.process"
+    internal let refreshTaskId  = "com.openwearables.healthsdk.task.refresh"
+    internal let processTaskId  = "com.openwearables.healthsdk.task.process"
 
     internal static var bgCompletionHandler: (() -> Void)?
     
@@ -82,18 +82,18 @@ import Network
 
     // MARK: - Flutter registration
     @objc public static func register(with registrar: FlutterPluginRegistrar) {
-        NSLog("[HealthBgSyncPlugin] Registering plugin...")
-        let channel = FlutterMethodChannel(name: "health_bg_sync", binaryMessenger: registrar.messenger())
-        let instance = HealthBgSyncPlugin()
+        NSLog("[OpenWearablesHealthSdkPlugin] Registering plugin...")
+        let channel = FlutterMethodChannel(name: "open_wearables_health_sdk", binaryMessenger: registrar.messenger())
+        let instance = OpenWearablesHealthSdkPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
         
-        let logChannel = FlutterEventChannel(name: "health_bg_sync/logs", binaryMessenger: registrar.messenger())
+        let logChannel = FlutterEventChannel(name: "open_wearables_health_sdk/logs", binaryMessenger: registrar.messenger())
         instance.logEventChannel = logChannel
         logChannel.setStreamHandler(instance)
     }
     
     @objc public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
-        HealthBgSyncPlugin.bgCompletionHandler = handler
+        OpenWearablesHealthSdkPlugin.bgCompletionHandler = handler
     }
 
     // MARK: - Init
@@ -138,17 +138,17 @@ import Network
             handleRestoreSession(result: result)
             
         case "isSessionValid":
-            result(HealthBgSyncKeychain.hasSession())
+            result(OpenWearablesHealthSdkKeychain.hasSession())
             
         case "isSyncActive":
-            result(HealthBgSyncKeychain.isSyncActive())
+            result(OpenWearablesHealthSdkKeychain.isSyncActive())
             
         case "getStoredCredentials":
             let credentials: [String: Any?] = [
-                "userId": HealthBgSyncKeychain.getUserId(),
-                "accessToken": HealthBgSyncKeychain.getAccessToken(),
-                "customSyncUrl": HealthBgSyncKeychain.getCustomSyncUrl(),
-                "isSyncActive": HealthBgSyncKeychain.isSyncActive()
+                "userId": OpenWearablesHealthSdkKeychain.getUserId(),
+                "accessToken": OpenWearablesHealthSdkKeychain.getAccessToken(),
+                "customSyncUrl": OpenWearablesHealthSdkKeychain.getCustomSyncUrl(),
+                "isSyncActive": OpenWearablesHealthSdkKeychain.isSyncActive()
             ]
             result(credentials)
 
@@ -165,7 +165,7 @@ import Network
             self.stopBackgroundDelivery()
             self.stopNetworkMonitoring()
             self.cancelAllBGTasks()
-            HealthBgSyncKeychain.setSyncActive(false)
+            OpenWearablesHealthSdkKeychain.setSyncActive(false)
             result(nil)
 
         case "resetAnchors":
@@ -174,7 +174,7 @@ import Network
             self.clearOutbox()
             logMessage("🔄 Anchors reset - will perform full sync on next sync")
             // If sync is active, trigger a new full sync
-            if HealthBgSyncKeychain.isSyncActive() && self.accessToken != nil {
+            if OpenWearablesHealthSdkKeychain.isSyncActive() && self.accessToken != nil {
                 logMessage("🔄 Triggering full export after reset...")
                 self.syncAll(fullExport: true) {
                     self.logMessage("✅ Full export after reset completed")
@@ -224,20 +224,20 @@ import Network
         }
         
         // Clear Keychain if app was reinstalled
-        HealthBgSyncKeychain.clearKeychainIfReinstalled()
+        OpenWearablesHealthSdkKeychain.clearKeychainIfReinstalled()
         
         self.baseUrl = baseUrl
         
         // Use provided customSyncUrl, or restore from storage
         if let providedCustomUrl = args["customSyncUrl"] as? String {
             self.customSyncUrl = providedCustomUrl
-            HealthBgSyncKeychain.saveCustomSyncUrl(providedCustomUrl)
-        } else if let storedCustomUrl = HealthBgSyncKeychain.getCustomSyncUrl() {
+            OpenWearablesHealthSdkKeychain.saveCustomSyncUrl(providedCustomUrl)
+        } else if let storedCustomUrl = OpenWearablesHealthSdkKeychain.getCustomSyncUrl() {
             self.customSyncUrl = storedCustomUrl
         }
         
         // Restore tracked types if available
-        if let storedTypes = HealthBgSyncKeychain.getTrackedTypes() {
+        if let storedTypes = OpenWearablesHealthSdkKeychain.getTrackedTypes() {
             self.trackedTypes = mapTypes(storedTypes)
             logMessage("📋 Restored \(trackedTypes.count) tracked types")
         }
@@ -249,7 +249,7 @@ import Network
         }
         
         // Auto-start sync if was previously active and session exists
-        if HealthBgSyncKeychain.isSyncActive() && HealthBgSyncKeychain.hasSession() && !trackedTypes.isEmpty {
+        if OpenWearablesHealthSdkKeychain.isSyncActive() && OpenWearablesHealthSdkKeychain.hasSession() && !trackedTypes.isEmpty {
             logMessage("🔄 Auto-restoring background sync...")
             DispatchQueue.main.async { [weak self] in
                 self?.autoRestoreSync()
@@ -300,19 +300,19 @@ import Network
         }
         
         // Save to Keychain
-        HealthBgSyncKeychain.saveCredentials(userId: userId, accessToken: accessToken)
+        OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: accessToken)
         
         // Save app credentials for token refresh (optional - only if provided)
         if let appId = args["appId"] as? String,
            let appSecret = args["appSecret"] as? String,
            let baseUrl = args["baseUrl"] as? String {
-            HealthBgSyncKeychain.saveAppCredentials(appId: appId, appSecret: appSecret, baseUrl: baseUrl)
+            OpenWearablesHealthSdkKeychain.saveAppCredentials(appId: appId, appSecret: appSecret, baseUrl: baseUrl)
             logMessage("✅ App credentials saved for refresh")
         }
         
         // Save token expiry (60 minutes from now)
         let expiresAt = Date().addingTimeInterval(60 * 60)
-        HealthBgSyncKeychain.saveTokenExpiry(expiresAt)
+        OpenWearablesHealthSdkKeychain.saveTokenExpiry(expiresAt)
         
         logMessage("✅ Signed in: userId=\(userId)")
         
@@ -340,7 +340,7 @@ import Network
         clearOutbox()
         
         // Clear Keychain (this removes userId, accessToken, etc.)
-        HealthBgSyncKeychain.clearAll()
+        OpenWearablesHealthSdkKeychain.clearAll()
         
         logMessage("✅ Sign out complete - all sync state reset")
         
@@ -349,8 +349,8 @@ import Network
     
     // MARK: - Restore Session
     private func handleRestoreSession(result: @escaping FlutterResult) {
-        if HealthBgSyncKeychain.hasSession(),
-           let userId = HealthBgSyncKeychain.getUserId() {
+        if OpenWearablesHealthSdkKeychain.hasSession(),
+           let userId = OpenWearablesHealthSdkKeychain.getUserId() {
             logMessage("📱 Session restored: userId=\(userId)")
             result(userId)
         } else {
@@ -369,7 +369,7 @@ import Network
         self.trackedTypes = mapTypes(types)
         
         // Save tracked types for restoration after restart
-        HealthBgSyncKeychain.saveTrackedTypes(types)
+        OpenWearablesHealthSdkKeychain.saveTrackedTypes(types)
         
         logMessage("📋 Requesting auth for \(trackedTypes.count) types")
         
@@ -407,7 +407,7 @@ import Network
         
         // Save sync active state for restoration after restart
         if canStart {
-            HealthBgSyncKeychain.setSyncActive(true)
+            OpenWearablesHealthSdkKeychain.setSyncActive(true)
         }
         
         result(canStart)
@@ -434,7 +434,7 @@ import Network
     // MARK: - Token Refresh
     internal func refreshTokenIfNeeded(completion: @escaping (Bool) -> Void) {
         // Check if token is expired
-        guard HealthBgSyncKeychain.isTokenExpired() else {
+        guard OpenWearablesHealthSdkKeychain.isTokenExpired() else {
             completion(true) 
             return
         }
@@ -442,11 +442,11 @@ import Network
         logMessage("🔄 Token expired, refreshing...")
         
         // Check if we have credentials to refresh
-        guard HealthBgSyncKeychain.hasRefreshCredentials(),
-              let appId = HealthBgSyncKeychain.getAppId(),
-              let appSecret = HealthBgSyncKeychain.getAppSecret(),
-              let baseUrl = HealthBgSyncKeychain.getBaseUrl(),
-              let userId = HealthBgSyncKeychain.getUserId() else {
+        guard OpenWearablesHealthSdkKeychain.hasRefreshCredentials(),
+              let appId = OpenWearablesHealthSdkKeychain.getAppId(),
+              let appSecret = OpenWearablesHealthSdkKeychain.getAppSecret(),
+              let baseUrl = OpenWearablesHealthSdkKeychain.getBaseUrl(),
+              let userId = OpenWearablesHealthSdkKeychain.getUserId() else {
             logMessage("❌ Missing credentials for token refresh")
             completion(false)
             return
@@ -488,11 +488,11 @@ import Network
             
             
             let fullToken = newToken.hasPrefix("Bearer ") ? newToken : "Bearer \(newToken)"
-            HealthBgSyncKeychain.saveCredentials(userId: userId, accessToken: fullToken)
+            OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: fullToken)
             
             
             let expiresAt = Date().addingTimeInterval(60 * 60)
-            HealthBgSyncKeychain.saveTokenExpiry(expiresAt)
+            OpenWearablesHealthSdkKeychain.saveTokenExpiry(expiresAt)
             
             self.logMessage("✅ Token refreshed successfully")
             completion(true)
@@ -960,7 +960,7 @@ import Network
     
     // MARK: - Logging
     internal func logMessage(_ message: String) {
-        NSLog("[HealthBgSync] %@", message)
+        NSLog("[OpenWearablesHealthSdk] %@", message)
         
         if let sink = logEventSink {
             DispatchQueue.main.async { [weak self] in
@@ -976,19 +976,19 @@ import Network
         if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
            let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted, .sortedKeys]),
            let prettyString = String(data: prettyData, encoding: .utf8) {
-            NSLog("[HealthBgSync] ========== %@ PAYLOAD START ==========", label)
+            NSLog("[OpenWearablesHealthSdk] ========== %@ PAYLOAD START ==========", label)
             // Split into chunks because NSLog has a limit (~1000 chars)
             let chunkSize = 800
             var index = prettyString.startIndex
             while index < prettyString.endIndex {
                 let endIndex = prettyString.index(index, offsetBy: chunkSize, limitedBy: prettyString.endIndex) ?? prettyString.endIndex
                 let chunk = String(prettyString[index..<endIndex])
-                NSLog("[HealthBgSync] %@", chunk)
+                NSLog("[OpenWearablesHealthSdk] %@", chunk)
                 index = endIndex
             }
-            NSLog("[HealthBgSync] ========== %@ PAYLOAD END (%d bytes) ==========", label, data.count)
+            NSLog("[OpenWearablesHealthSdk] ========== %@ PAYLOAD END (%d bytes) ==========", label, data.count)
         } else {
-            NSLog("[HealthBgSync] %@: Failed to pretty-print payload (%d bytes)", label, data.count)
+            NSLog("[OpenWearablesHealthSdk] %@: Failed to pretty-print payload (%d bytes)", label, data.count)
         }
         #endif
     }

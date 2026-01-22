@@ -1,16 +1,16 @@
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
-/// Defines the interface for the HealthBgSync plugin.
-abstract class HealthBgSyncPlatform extends PlatformInterface {
-  HealthBgSyncPlatform() : super(token: _token);
+/// Defines the interface for the OpenWearablesHealthSdk plugin.
+abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
+  OpenWearablesHealthSdkPlatform() : super(token: _token);
 
   static final Object _token = Object();
 
-  static HealthBgSyncPlatform _instance = _NoopHealthBgSyncPlatform();
+  static OpenWearablesHealthSdkPlatform _instance = _NoopOpenWearablesHealthSdkPlatform();
 
-  static HealthBgSyncPlatform get instance => _instance;
+  static OpenWearablesHealthSdkPlatform get instance => _instance;
 
-  static set instance(HealthBgSyncPlatform instance) {
+  static set instance(OpenWearablesHealthSdkPlatform instance) {
     PlatformInterface.verifyToken(instance, _token);
     _instance = instance;
   }
@@ -115,4 +115,4 @@ abstract class HealthBgSyncPlatform extends PlatformInterface {
 }
 
 /// NO-OP placeholder.
-class _NoopHealthBgSyncPlatform extends HealthBgSyncPlatform {}
+class _NoopOpenWearablesHealthSdkPlatform extends OpenWearablesHealthSdkPlatform {}

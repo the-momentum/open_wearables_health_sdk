@@ -1,13 +1,13 @@
 Pod::Spec.new do |s|
-  s.name             = 'health_bg_sync'
+  s.name             = 'open_wearables_health_sdk'
   s.version          = '0.0.1'
-  s.summary          = 'A new Flutter plugin project.'
+  s.summary          = 'Flutter SDK for background health data synchronization to Open Wearables platform.'
   s.description      = <<-DESC
-A new Flutter plugin project.
+Flutter SDK for secure background health data synchronization from Apple HealthKit to the Open Wearables platform.
   DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://openwearables.io'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { 'Open Wearables' => 'hello@openwearables.io' }
   s.source           = { :path => '.' }
 
   # KLUCZOWE: tylko pliki źródłowe

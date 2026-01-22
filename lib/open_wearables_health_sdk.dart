@@ -1,26 +1,26 @@
-import 'package:health_bg_sync/health_data_type.dart';
-import 'package:health_bg_sync/src/config.dart';
-import 'package:health_bg_sync/src/exceptions.dart';
-import 'package:health_bg_sync/src/status.dart';
-import 'package:health_bg_sync/src/user.dart';
+import 'package:open_wearables_health_sdk/health_data_type.dart';
+import 'package:open_wearables_health_sdk/src/config.dart';
+import 'package:open_wearables_health_sdk/src/exceptions.dart';
+import 'package:open_wearables_health_sdk/src/status.dart';
+import 'package:open_wearables_health_sdk/src/user.dart';
 
-import 'health_bg_sync_method_channel.dart';
-import 'health_bg_sync_platform_interface.dart';
+import 'open_wearables_health_sdk_method_channel.dart';
+import 'open_wearables_health_sdk_platform_interface.dart';
 
-export 'package:health_bg_sync/src/config.dart';
-export 'package:health_bg_sync/src/exceptions.dart';
-export 'package:health_bg_sync/src/status.dart';
-export 'package:health_bg_sync/src/user.dart';
-export 'health_bg_sync_method_channel.dart';
+export 'package:open_wearables_health_sdk/src/config.dart';
+export 'package:open_wearables_health_sdk/src/exceptions.dart';
+export 'package:open_wearables_health_sdk/src/status.dart';
+export 'package:open_wearables_health_sdk/src/user.dart';
+export 'open_wearables_health_sdk_method_channel.dart';
 
 /// Ensure MethodChannel is the default implementation.
 /// This runs at library load time before any static methods can be called.
-final HealthBgSyncPlatform _platform = (() {
-  HealthBgSyncPlatform.instance = MethodChannelHealthBgSync();
-  return HealthBgSyncPlatform.instance;
+final OpenWearablesHealthSdkPlatform _platform = (() {
+  OpenWearablesHealthSdkPlatform.instance = MethodChannelOpenWearablesHealthSdk();
+  return OpenWearablesHealthSdkPlatform.instance;
 })();
 
-/// Main entry point for the HealthBgSync plugin.
+/// Main entry point for the Open Wearables Health SDK plugin.
 ///
 /// This plugin enables background health data synchronization from
 /// Apple HealthKit (iOS) and Health Connect (Android) to the
@@ -30,13 +30,13 @@ final HealthBgSyncPlatform _platform = (() {
 ///
 /// 1. Configure the plugin:
 /// ```dart
-/// await HealthBgSync.configure();
+/// await OpenWearablesHealthSdk.configure();
 /// ```
 ///
 /// 2. Get accessToken from your backend and sign in:
 /// ```dart
 /// final credentials = await yourBackend.getHealthCredentials();
-/// await HealthBgSync.signIn(
+/// await OpenWearablesHealthSdk.signIn(
 ///   userId: credentials['userId'],
 ///   accessToken: credentials['accessToken'],
 /// );
@@ -44,23 +44,23 @@ final HealthBgSyncPlatform _platform = (() {
 ///
 /// 3. Request health data permissions:
 /// ```dart
-/// await HealthBgSync.requestAuthorization(types: [...]);
+/// await OpenWearablesHealthSdk.requestAuthorization(types: [...]);
 /// ```
 ///
 /// 4. Start background synchronization:
 /// ```dart
-/// await HealthBgSync.startBackgroundSync();
+/// await OpenWearablesHealthSdk.startBackgroundSync();
 /// ```
-class HealthBgSync {
-  HealthBgSync._();
+class OpenWearablesHealthSdk {
+  OpenWearablesHealthSdk._();
 
-  static HealthBgSyncConfig? _config;
-  static HealthBgSyncUser? _currentUser;
+  static OpenWearablesHealthSdkConfig? _config;
+  static OpenWearablesHealthSdkUser? _currentUser;
   static bool _isSyncActive = false;
 
   // MARK: - Configuration
 
-  /// Configures the HealthBgSync plugin.
+  /// Configures the OpenWearablesHealthSdk plugin.
   ///
   /// This must be called before any other method. It will also attempt
   /// to restore any existing user session from secure storage.
@@ -72,25 +72,25 @@ class HealthBgSync {
   ///   Example: `http://localhost:3000/sdk/users/{user_id}/sync/apple/healthion`
   ///
   /// ```dart
-  /// await HealthBgSync.configure(
-  ///   environment: HealthBgSyncEnvironment.sandbox,
+  /// await OpenWearablesHealthSdk.configure(
+  ///   environment: OpenWearablesHealthSdkEnvironment.sandbox,
   /// );
   ///
   /// // Or with custom URL for local testing:
-  /// await HealthBgSync.configure(
+  /// await OpenWearablesHealthSdk.configure(
   ///   customSyncUrl: 'http://localhost:3000/sdk/users/{user_id}/sync/apple/healthion',
   /// );
   ///
   /// // Check if session was restored
-  /// if (HealthBgSync.isSignedIn) {
+  /// if (OpenWearablesHealthSdk.isSignedIn) {
   ///   print('Welcome back!');
   /// }
   /// ```
   static Future<void> configure({
-    HealthBgSyncEnvironment environment = HealthBgSyncEnvironment.production,
+    OpenWearablesHealthSdkEnvironment environment = OpenWearablesHealthSdkEnvironment.production,
     String? customSyncUrl,
   }) async {
-    _config = HealthBgSyncConfig(environment: environment);
+    _config = OpenWearablesHealthSdkConfig(environment: environment);
 
     // Configure and check if sync was auto-restored
     _isSyncActive = await _platform.configure(baseUrl: _config!.baseUrl, customSyncUrl: customSyncUrl);
@@ -98,20 +98,20 @@ class HealthBgSync {
     // Try to restore existing session from Keychain
     final restoredUserId = await _platform.restoreSession();
     if (restoredUserId != null) {
-      _currentUser = HealthBgSyncUser(userId: restoredUserId);
+      _currentUser = OpenWearablesHealthSdkUser(userId: restoredUserId);
     }
   }
 
   /// Returns the current configuration, or null if not configured.
-  static HealthBgSyncConfig? get config => _config;
+  static OpenWearablesHealthSdkConfig? get config => _config;
 
   // MARK: - Status
 
   /// Returns the current status of the plugin.
-  static HealthBgSyncStatus get status {
-    if (_config == null) return HealthBgSyncStatus.notConfigured;
-    if (_currentUser == null) return HealthBgSyncStatus.configured;
-    return HealthBgSyncStatus.signedIn;
+  static OpenWearablesHealthSdkStatus get status {
+    if (_config == null) return OpenWearablesHealthSdkStatus.notConfigured;
+    if (_currentUser == null) return OpenWearablesHealthSdkStatus.configured;
+    return OpenWearablesHealthSdkStatus.signedIn;
   }
 
   /// Returns true if the plugin is configured.
@@ -121,7 +121,7 @@ class HealthBgSync {
   static bool get isSignedIn => _currentUser != null;
 
   /// Returns the currently signed-in user, or null if no user is signed in.
-  static HealthBgSyncUser? get currentUser => _currentUser;
+  static OpenWearablesHealthSdkUser? get currentUser => _currentUser;
 
   /// Returns true if background sync is active.
   static bool get isSyncActive => _isSyncActive;
@@ -147,7 +147,7 @@ class HealthBgSync {
   /// 4. Mobile app calls this method with the credentials
   ///
   /// ```dart
-  /// final user = await HealthBgSync.signIn(
+  /// final user = await OpenWearablesHealthSdk.signIn(
   ///   userId: response['userId'],
   ///   accessToken: response['accessToken'],
   ///   appId: 'your-app-id',        // For auto-refresh
@@ -158,7 +158,7 @@ class HealthBgSync {
   ///
   /// Throws [NotConfiguredException] if [configure] was not called.
   /// Throws [SignInException] if sign-in fails.
-  static Future<HealthBgSyncUser> signIn({
+  static Future<OpenWearablesHealthSdkUser> signIn({
     required String userId,
     required String accessToken,
     String? appId,
@@ -175,7 +175,7 @@ class HealthBgSync {
       baseUrl: baseUrl,
     );
 
-    _currentUser = HealthBgSyncUser(userId: userId);
+    _currentUser = OpenWearablesHealthSdkUser(userId: userId);
 
     return _currentUser!;
   }
@@ -287,7 +287,7 @@ class HealthBgSync {
   /// - `createdAt`: String? - ISO8601 timestamp when sync started
   ///
   /// ```dart
-  /// final status = await HealthBgSync.getSyncStatus();
+  /// final status = await OpenWearablesHealthSdk.getSyncStatus();
   /// if (status['hasResumableSession'] == true) {
   ///   print('Sync interrupted, ${status['sentCount']} records already sent');
   /// }
@@ -306,9 +306,9 @@ class HealthBgSync {
   /// Throws [PlatformException] if there's no resumable session.
   ///
   /// ```dart
-  /// final status = await HealthBgSync.getSyncStatus();
+  /// final status = await OpenWearablesHealthSdk.getSyncStatus();
   /// if (status['hasResumableSession'] == true) {
-  ///   await HealthBgSync.resumeSync();
+  ///   await OpenWearablesHealthSdk.resumeSync();
   /// }
   /// ```
   static Future<void> resumeSync() async {

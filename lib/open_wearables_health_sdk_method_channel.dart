@@ -1,12 +1,12 @@
 import 'package:flutter/services.dart';
 
-import 'health_bg_sync_platform_interface.dart';
+import 'open_wearables_health_sdk_platform_interface.dart';
 import 'src/exceptions.dart';
 
-/// MethodChannel-based implementation of the HealthBgSync platform interface.
-class MethodChannelHealthBgSync extends HealthBgSyncPlatform {
-  static const MethodChannel _channel = MethodChannel('health_bg_sync');
-  static const EventChannel _logChannel = EventChannel('health_bg_sync/logs');
+/// MethodChannel-based implementation of the OpenWearablesHealthSdk platform interface.
+class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform {
+  static const MethodChannel _channel = MethodChannel('open_wearables_health_sdk');
+  static const EventChannel _logChannel = EventChannel('open_wearables_health_sdk/logs');
 
   /// Stream of log messages from the native SDK.
   /// Subscribe to this to receive real-time logs about sync operations.

@@ -1,7 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:health_bg_sync/health_bg_sync.dart';
-import 'package:health_bg_sync/health_data_type.dart';
+import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
+import 'package:open_wearables_health_sdk/health_data_type.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -98,7 +98,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _subscribeToNativeLogs() {
-    MethodChannelHealthBgSync.logStream.listen((message) {
+    MethodChannelOpenWearablesHealthSdk.logStream.listen((message) {
       final timestamp = DateTime.now().toIso8601String().split('T').last.split('.').first;
       _addLog('$timestamp $message');
     });
@@ -115,7 +115,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _autoConfigureOnStartup() async {
     setState(() => _isLoading = true);
     try {
-      final credentials = await HealthBgSync.getStoredCredentials();
+      final credentials = await OpenWearablesHealthSdk.getStoredCredentials();
       final hasUserId = credentials['userId'] != null && (credentials['userId'] as String).isNotEmpty;
       final hasAccessToken = credentials['accessToken'] != null && (credentials['accessToken'] as String).isNotEmpty;
       final wasSyncActive = credentials['isSyncActive'] == true;
@@ -131,7 +131,7 @@ class _HomePageState extends State<HomePage> {
 
       if (hasUserId && hasAccessToken && wasSyncActive) {
         final storedCustomUrl = credentials['customSyncUrl'] as String?;
-        await HealthBgSync.configure(environment: HealthBgSyncEnvironment.production, customSyncUrl: storedCustomUrl);
+        await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: storedCustomUrl);
         _checkStatus();
         _setStatus('Session restored');
       }
@@ -158,12 +158,12 @@ class _HomePageState extends State<HomePage> {
 
     try {
       final fullSyncUrl = '$baseUrl/api/v1/sdk/users/{user_id}/sync/apple/healthion';
-      await HealthBgSync.configure(environment: HealthBgSyncEnvironment.production, customSyncUrl: fullSyncUrl);
+      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
       _checkStatus();
 
       _setStatus('Signing in...');
       final authToken = token.startsWith('Bearer ') ? token : 'Bearer $token';
-      await HealthBgSync.signIn(
+      await OpenWearablesHealthSdk.signIn(
         userId: userId,
         accessToken: authToken,
       );
@@ -179,8 +179,8 @@ class _HomePageState extends State<HomePage> {
 
   void _checkStatus() {
     setState(() {
-      _isSignedIn = HealthBgSync.isSignedIn;
-      _isSyncing = HealthBgSync.isSyncActive;
+      _isSignedIn = OpenWearablesHealthSdk.isSignedIn;
+      _isSyncing = OpenWearablesHealthSdk.isSyncActive;
     });
   }
 
@@ -194,7 +194,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _signOut() async {
     setState(() => _isLoading = true);
     try {
-      await HealthBgSync.signOut();
+      await OpenWearablesHealthSdk.signOut();
       _setStatus('Signed out');
       _checkStatus();
       setState(() {
@@ -212,7 +212,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _requestAuthorization() async {
     setState(() => _isLoading = true);
     try {
-      final authorized = await HealthBgSync.requestAuthorization(types: HealthDataType.values);
+      final authorized = await OpenWearablesHealthSdk.requestAuthorization(types: HealthDataType.values);
       setState(() => _isAuthorized = authorized);
       _setStatus(authorized ? 'Authorized' : 'Authorization denied');
     } on NotSignedInException {
@@ -227,7 +227,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _startBackgroundSync() async {
     setState(() => _isLoading = true);
     try {
-      final started = await HealthBgSync.startBackgroundSync();
+      final started = await OpenWearablesHealthSdk.startBackgroundSync();
       setState(() => _isSyncing = started);
       _setStatus(started ? 'Sync started' : 'Could not start sync');
     } on NotSignedInException {
@@ -242,7 +242,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _stopBackgroundSync() async {
     setState(() => _isLoading = true);
     try {
-      await HealthBgSync.stopBackgroundSync();
+      await OpenWearablesHealthSdk.stopBackgroundSync();
       setState(() => _isSyncing = false);
       _setStatus('Sync stopped');
     } catch (e) {
@@ -255,7 +255,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _syncNow() async {
     setState(() => _isLoading = true);
     try {
-      await HealthBgSync.syncNow();
+      await OpenWearablesHealthSdk.syncNow();
       _setStatus('Sync triggered');
     } on NotSignedInException {
       _setStatus('Sign in first');

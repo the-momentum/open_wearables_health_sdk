@@ -4,8 +4,8 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.healthbgsync.task.refresh</string>
-		<string>com.healthbgsync.task.process</string>
+		<string>com.openwearables.healthsdk.task.refresh</string>
+		<string>com.openwearables.healthsdk.task.process</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>

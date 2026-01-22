@@ -2,10 +2,10 @@ import Foundation
 import Security
 
 /// Secure storage for credentials using iOS Keychain
-internal class HealthBgSyncKeychain {
+internal class OpenWearablesHealthSdkKeychain {
     
-    private static let service = "com.healthbgsync.tokens"
-    private static let defaults = UserDefaults(suiteName: "com.healthbgsync.config") ?? .standard
+    private static let service = "com.openwearables.healthsdk.tokens"
+    private static let defaults = UserDefaults(suiteName: "com.openwearables.healthsdk.config") ?? .standard
     
     // MARK: - Keys
     private static let accessTokenKey = "accessToken"
@@ -31,7 +31,7 @@ internal class HealthBgSyncKeychain {
             // First launch after install (or reinstall)
             // Clear any stale Keychain data from previous install
             if hasSession() {
-                NSLog("[HealthBgSync] 🔄 App reinstalled - clearing stale Keychain data")
+                NSLog("[OpenWearablesHealthSdk] 🔄 App reinstalled - clearing stale Keychain data")
                 clearAll()
             }
             
@@ -176,7 +176,7 @@ internal class HealthBgSyncKeychain {
         
         let status = SecItemAdd(query as CFDictionary, nil)
         if status != errSecSuccess {
-            NSLog("[HealthBgSync] ⚠️ Keychain save failed for \(key): \(status)")
+            NSLog("[OpenWearablesHealthSdk] ⚠️ Keychain save failed for \(key): \(status)")
         }
     }
     

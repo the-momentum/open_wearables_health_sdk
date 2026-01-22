@@ -1,7 +1,7 @@
 import Foundation
 import HealthKit
 
-extension HealthBgSyncPlugin {
+extension OpenWearablesHealthSdkPlugin {
 
     // MARK: - Keys (per-user)
     internal func userKey() -> String {

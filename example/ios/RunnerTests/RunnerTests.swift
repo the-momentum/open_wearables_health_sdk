@@ -3,7 +3,7 @@ import UIKit
 import XCTest
 
 
-@testable import health_bg_sync
+@testable import open_wearables_health_sdk
 
 // This demonstrates a simple unit test of the Swift portion of this plugin's implementation.
 //
@@ -12,7 +12,7 @@ import XCTest
 class RunnerTests: XCTestCase {
 
   func testGetPlatformVersion() {
-    let plugin = HealthBgSyncPlugin()
+    let plugin = OpenWearablesHealthSdkPlugin()
 
     let call = FlutterMethodCall(methodName: "getPlatformVersion", arguments: [])
 

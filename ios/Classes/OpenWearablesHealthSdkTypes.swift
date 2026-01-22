@@ -1,7 +1,7 @@
 import Foundation
 import HealthKit
 
-extension HealthBgSyncPlugin {
+extension OpenWearablesHealthSdkPlugin {
 
     // MARK: - Public API (called from your anchored queries)
     // Builds payload in the SAME shape as your Flutter-side export:

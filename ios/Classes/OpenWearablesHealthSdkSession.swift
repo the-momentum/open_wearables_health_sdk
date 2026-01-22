@@ -35,7 +35,7 @@ struct SyncState: Codable {
     }
 }
 
-extension HealthBgSyncPlugin {
+extension OpenWearablesHealthSdkPlugin {
     
     // MARK: - Sync State File
     

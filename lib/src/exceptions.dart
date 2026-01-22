@@ -3,7 +3,7 @@ class NotConfiguredException implements Exception {
   const NotConfiguredException();
 
   @override
-  String toString() => 'NotConfiguredException: HealthBgSync.configure() was not called.';
+  String toString() => 'NotConfiguredException: OpenWearablesHealthSdk.configure() was not called.';
 }
 
 /// Thrown when no user is signed in.
@@ -11,7 +11,7 @@ class NotSignedInException implements Exception {
   const NotSignedInException();
 
   @override
-  String toString() => 'NotSignedInException: No user is signed in. Call HealthBgSync.signIn() first.';
+  String toString() => 'NotSignedInException: No user is signed in. Call OpenWearablesHealthSdk.signIn() first.';
 }
 
 /// Thrown when sign-in fails.

@@ -1,6 +1,6 @@
 import Foundation
 
-extension HealthBgSyncPlugin {
+extension OpenWearablesHealthSdkPlugin {
 
     // MARK: - URLSession delegate
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -76,7 +76,7 @@ extension HealthBgSyncPlugin {
                 // Mark full export as done if this was a full export
                 if item.wasFullExport == true {
                     let fullDoneKey = "fullDone.\(item.userKey)"
-                    let defaults = UserDefaults(suiteName: "com.healthbgsync.state") ?? .standard
+                    let defaults = UserDefaults(suiteName: "com.openwearables.healthsdk.state") ?? .standard
                     defaults.set(true, forKey: fullDoneKey)
                     defaults.synchronize()
                     print("✅ Marked full export as complete for user: \(item.userKey)")
@@ -98,8 +98,8 @@ extension HealthBgSyncPlugin {
 
     public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         print("📡 urlSessionDidFinishEvents called")
-        if let handler = HealthBgSyncPlugin.bgCompletionHandler {
-            HealthBgSyncPlugin.bgCompletionHandler = nil
+        if let handler = OpenWearablesHealthSdkPlugin.bgCompletionHandler {
+            OpenWearablesHealthSdkPlugin.bgCompletionHandler = nil
             handler()
         }
     }

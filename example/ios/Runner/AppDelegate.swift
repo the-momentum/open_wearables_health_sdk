@@ -1,6 +1,6 @@
 import Flutter
 import UIKit
-import health_bg_sync
+import open_wearables_health_sdk
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -13,6 +13,6 @@ import health_bg_sync
   override func application(_ application: UIApplication,
                             handleEventsForBackgroundURLSession identifier: String,
                             completionHandler: @escaping () -> Void) {
-    HealthBgSyncPlugin.setBackgroundCompletionHandler(completionHandler)
+    OpenWearablesHealthSdkPlugin.setBackgroundCompletionHandler(completionHandler)
   }
 }

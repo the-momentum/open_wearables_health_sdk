@@ -1,7 +1,15 @@
-name: health_bg_sync
-description: "A new Flutter plugin project."
+name: open_wearables_health_sdk
+description: "Flutter SDK for secure background health data synchronization from Apple HealthKit (iOS) and Health Connect (Android) to the Open Wearables platform."
 version: 0.0.1
-homepage:
+homepage: https://openwearables.io
+repository: https://github.com/openwearables/open_wearables_health_sdk
+issue_tracker: https://github.com/openwearables/open_wearables_health_sdk/issues
+topics:
+  - health
+  - healthkit
+  - wearables
+  - fitness
+  - background-sync
 
 environment:
   sdk: ^3.9.2
@@ -35,10 +43,10 @@ flutter:
   plugin:
     platforms:
       android:
-        package: com.momentum.health.export.health_bg_sync
-        pluginClass: HealthBgSyncPlugin
+        package: com.openwearables.health.sdk
+        pluginClass: OpenWearablesHealthSdkPlugin
       ios:
-        pluginClass: HealthBgSyncPlugin
+        pluginClass: OpenWearablesHealthSdkPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:

@@ -1,7 +1,7 @@
 import Foundation
 import HealthKit
 
-extension HealthBgSyncPlugin {
+extension OpenWearablesHealthSdkPlugin {
 
     // MARK: - Outbox model
     internal struct OutboxItem: Codable {

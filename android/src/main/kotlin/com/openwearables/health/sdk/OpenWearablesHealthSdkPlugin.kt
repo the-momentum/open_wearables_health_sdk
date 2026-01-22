@@ -1,4 +1,4 @@
-package com.momentum.health.export.health_bg_sync
+package com.openwearables.health.sdk
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
@@ -6,8 +6,8 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 
-/** HealthBgSyncPlugin */
-class HealthBgSyncPlugin :
+/** OpenWearablesHealthSdkPlugin */
+class OpenWearablesHealthSdkPlugin :
     FlutterPlugin,
     MethodCallHandler {
     // The MethodChannel that will the communication between Flutter and native Android
@@ -17,7 +17,7 @@ class HealthBgSyncPlugin :
     private lateinit var channel: MethodChannel
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "health_bg_sync")
+        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "open_wearables_health_sdk")
         channel.setMethodCallHandler(this)
     }
 

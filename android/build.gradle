@@ -1,4 +1,4 @@
-group = "com.momentum.health.export.health_bg_sync"
+group = "com.openwearables.health.sdk"
 version = "1.0-SNAPSHOT"
 
 buildscript {
@@ -25,7 +25,7 @@ apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
 
 android {
-    namespace = "com.momentum.health.export.health_bg_sync"
+    namespace = "com.openwearables.health.sdk"
 
     compileSdk = 36
 

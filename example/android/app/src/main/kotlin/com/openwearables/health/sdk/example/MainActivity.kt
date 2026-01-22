@@ -1,4 +1,4 @@
-package com.momentum.health.export.health_bg_sync_example
+package com.openwearables.health.sdk.example
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -3,7 +3,7 @@ import UIKit
 import HealthKit
 import BackgroundTasks
 
-extension HealthBgSyncPlugin {
+extension OpenWearablesHealthSdkPlugin {
 
     // MARK: - Background delivery
     internal func startBackgroundDelivery() {
