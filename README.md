@@ -1,13 +1,13 @@
 # Open Wearables Health SDK
 
-A Flutter plugin for secure background health data synchronization from Apple HealthKit (iOS) and Health Connect (Android) to the Open Wearables platform.
+A Flutter plugin for secure background health data synchronization from Apple HealthKit (iOS) to the Open Wearables platform.
 
 ## Features
 
 - 🔐 **Simple Token Authentication** - Backend generates accessToken, SDK uses it directly
 - 📱 **Background Sync** - Health data syncs even when app is in background
 - 📦 **Incremental Updates** - Only syncs new data using anchored queries
-- 💾 **Secure Storage** - Credentials stored in iOS Keychain / Android Keystore
+- 💾 **Secure Storage** - Credentials stored in iOS Keychain
 - 📊 **Wide Data Support** - Steps, heart rate, workouts, sleep, and more
 
 ---
@@ -85,7 +85,7 @@ A Flutter plugin for secure background health data synchronization from Apple He
    );
    ```
 
-6. **SDK stores credentials securely** in iOS Keychain / Android Keystore
+6. **SDK stores credentials securely** in iOS Keychain
 
 7. **Health data syncs using accessToken**
    ```http
