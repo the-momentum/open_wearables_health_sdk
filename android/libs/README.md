@@ -1,6 +1,24 @@
 # Samsung Health SDK Setup
 
-This folder should contain the Samsung Health Data SDK `.aar` file.
+This folder contains the Samsung Health Data SDK published as a local Maven repository.
+
+## Structure
+
+```
+libs/
+├── maven/                          # Local Maven repository
+│   └── com/samsung/android/health/data/1.0.0/
+│       ├── data-1.0.0.aar          # Samsung Health SDK
+│       └── data-1.0.0.pom          # Maven POM file
+├── samsung-health-data-api-1.0.0.aar  # Original .aar (kept for reference)
+└── README.md
+```
+
+## Why Maven Repository?
+
+Flutter plugins compile to AAR files. Android Gradle Plugin does not support
+direct `.aar` dependencies when building an AAR (the classes wouldn't be packaged).
+Using a local Maven repository solves this issue.
 
 ## Download Instructions
 
@@ -8,8 +26,8 @@ This folder should contain the Samsung Health Data SDK `.aar` file.
 2. Sign in with your Samsung account
 3. Download the **Samsung Health Data SDK**
 4. Extract the archive and find `samsung-health-data-api-x.x.x.aar`
-5. Rename it to `samsung-health-data-api.aar` (or keep the versioned name)
-6. Place it in this `libs/` folder
+5. Copy to `libs/maven/com/samsung/android/health/data/1.0.0/data-1.0.0.aar`
+6. Keep the POM file as-is (or update version if needed)
 
 ## Requirements
 

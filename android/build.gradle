@@ -18,15 +18,16 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        // Samsung Health SDK - place samsung-health-data-api.aar in libs/ folder
-        flatDir {
-            dirs 'libs'
+        // Samsung Health SDK - local Maven repository
+        maven {
+            url = uri("${project.projectDir}/libs/maven")
         }
     }
 }
 
 apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
+apply plugin: "kotlin-parcelize"
 
 android {
     namespace = "com.openwearables.health.sdk"
@@ -53,9 +54,9 @@ android {
     }
 
     dependencies {
-        // Samsung Health Data SDK - download from Samsung Developer Portal
-        // Place samsung-health-data-api.aar in android/libs/ folder
-        implementation(fileTree(dir: 'libs', include: ['*.aar']))
+        // Samsung Health Data SDK - from local Maven repository
+        // Original .aar from Samsung Developer Portal, republished to libs/maven/
+        implementation("com.samsung.android.health:data:1.0.0")
         
         // Kotlin Coroutines
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

@@ -2,6 +2,10 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Samsung Health SDK - local Maven repository from plugin
+        maven {
+            url = uri("${rootProject.projectDir}/../../android/libs/maven")
+        }
     }
 }
 
