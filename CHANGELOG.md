@@ -1,3 +1,11 @@
+## 0.0.3
+
+* Changed sync endpoint URL from `/sdk/users/{user_id}/sync/apple/healthion` to `/sdk/users/{user_id}/sync/apple`
+
+## 0.0.2
+
+* Added repository and issue tracker URLs for pub.dev
+
 ## 0.0.1
 
 * Initial release of Open Wearables Health SDK

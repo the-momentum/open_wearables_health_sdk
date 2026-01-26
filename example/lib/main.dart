@@ -157,7 +157,7 @@ class _HomePageState extends State<HomePage> {
     setState(() => _isLoading = true);
 
     try {
-      final fullSyncUrl = '$baseUrl/api/v1/sdk/users/{user_id}/sync/apple/healthion';
+      final fullSyncUrl = '$baseUrl/sdk/users/{user_id}/sync/apple';
       await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
       _checkStatus();
 
