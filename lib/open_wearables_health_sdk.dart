@@ -69,7 +69,7 @@ class OpenWearablesHealthSdk {
   /// - [customSyncUrl]: Optional custom URL for syncing health data.
   ///   Use this for local testing. The URL can include `{user_id}` or `{userId}`
   ///   placeholder which will be replaced with the signed-in user's ID.
-  ///   Example: `http://localhost:3000/sdk/users/{user_id}/sync/apple/healthion`
+  ///   Example: `http://localhost:3000/sdk/users/{user_id}/sync/apple`
   ///
   /// ```dart
   /// await OpenWearablesHealthSdk.configure(
@@ -78,7 +78,7 @@ class OpenWearablesHealthSdk {
   ///
   /// // Or with custom URL for local testing:
   /// await OpenWearablesHealthSdk.configure(
-  ///   customSyncUrl: 'http://localhost:3000/sdk/users/{user_id}/sync/apple/healthion',
+  ///   customSyncUrl: 'http://localhost:3000/sdk/users/{user_id}/sync/apple',
   /// );
   ///
   /// // Check if session was restored
