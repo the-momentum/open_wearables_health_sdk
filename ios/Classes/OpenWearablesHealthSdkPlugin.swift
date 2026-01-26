@@ -77,7 +77,7 @@ import Network
         
         // Default endpoint
         guard let baseUrl = baseUrl else { return nil }
-        return URL(string: "\(baseUrl)/sdk/users/\(userId)/sync/apple")
+        return URL(string: "\(baseUrl)/api/v1/sdk/users/\(userId)/sync/apple")
     }
 
     // MARK: - Flutter registration

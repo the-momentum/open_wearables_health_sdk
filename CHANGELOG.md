@@ -1,3 +1,7 @@
+## 0.0.4
+
+* Fixed iOS sync endpoint URL - added missing `/api/v1/` prefix
+
 ## 0.0.3
 
 * Changed sync endpoint URL from `/sdk/users/{user_id}/sync/apple/healthion` to `/sdk/users/{user_id}/sync/apple`
