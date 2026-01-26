@@ -79,7 +79,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _customUrlController = TextEditingController(text: 'https://api.openwearables.io');
+  final _customUrlController = TextEditingController(text: 'https://api.openwearables.io/api/v1/');
   final _userIdController = TextEditingController();
   final _tokenController = TextEditingController();
 
@@ -145,9 +145,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loginWithToken() async {
     final userId = _userIdController.text.trim();
     final token = _tokenController.text.trim();
-    final baseUrl = _customUrlController.text.isNotEmpty
-        ? _customUrlController.text.trim()
-        : 'https://api.openwearables.io';
+    final customUrl = _customUrlController.text.trim();
 
     if (userId.isEmpty || token.isEmpty) {
       _setStatus('Please fill User ID and Token');
@@ -157,8 +155,17 @@ class _HomePageState extends State<HomePage> {
     setState(() => _isLoading = true);
 
     try {
-      // Let SDK use the correct platform-specific endpoint (samsung for Android, apple for iOS)
-      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production);
+      // If URL contains {user_id} placeholder, use it directly; otherwise treat as base URL ending with /api/v1/
+      final String fullSyncUrl;
+      if (customUrl.contains('{user_id}')) {
+        fullSyncUrl = customUrl;
+      } else {
+        final baseUrl = customUrl.isNotEmpty ? customUrl : 'https://api.openwearables.io/api/v1/';
+        // Remove trailing slash if present, then append path
+        final normalizedBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+        fullSyncUrl = '$normalizedBase/sdk/users/{user_id}/sync/apple';
+      }
+      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
       _checkStatus();
 
       _setStatus('Signing in...');

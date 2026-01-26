@@ -1,3 +1,7 @@
+## 0.0.5
+
+* Fixed example app default sync URL to use correct `/api/v1/` base path
+
 ## 0.0.4
 
 * Fixed iOS sync endpoint URL - added missing `/api/v1/` prefix
