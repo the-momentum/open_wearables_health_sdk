@@ -42,6 +42,9 @@ flutter:
   # adding or updating assets for this project.
   plugin:
     platforms:
+      android:
+        package: com.openwearables.health.sdk
+        pluginClass: OpenWearablesHealthSdkPlugin
       ios:
         pluginClass: OpenWearablesHealthSdkPlugin
 

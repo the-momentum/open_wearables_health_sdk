@@ -3,6 +3,9 @@ package com.openwearables.health.sdk
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -16,7 +19,7 @@ import kotlinx.coroutines.*
 /**
  * OpenWearablesHealthSdkPlugin - Flutter plugin for Samsung Health data sync
  */
-class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventChannel.StreamHandler {
+class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, EventChannel.StreamHandler, DefaultLifecycleObserver {
 
     companion object {
         private const val TAG = "OpenWearablesHealthSdk"
@@ -45,6 +48,10 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
     // Configuration
     private var baseUrl: String? = null
     private var customSyncUrl: String? = null
+    
+    // Lifecycle tracking
+    private var isInForeground = true
+    private var lifecycleObserverRegistered = false
 
     // Coroutine scope for async operations
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -59,6 +66,9 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
 
         logChannel = EventChannel(flutterPluginBinding.binaryMessenger, LOG_CHANNEL_NAME)
         logChannel.setStreamHandler(this)
+        
+        // Register lifecycle observer to detect app going to background
+        registerLifecycleObserver()
 
         Log.d(TAG, "Plugin attached to engine")
     }
@@ -66,9 +76,68 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         methodChannel.setMethodCallHandler(null)
         logChannel.setStreamHandler(null)
+        unregisterLifecycleObserver()
         scope.cancel()
         context = null
         Log.d(TAG, "Plugin detached from engine")
+    }
+    
+    // MARK: - Lifecycle Observer
+    
+    private fun registerLifecycleObserver() {
+        if (!lifecycleObserverRegistered) {
+            try {
+                ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+                lifecycleObserverRegistered = true
+                Log.d(TAG, "Lifecycle observer registered")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to register lifecycle observer: ${e.message}")
+            }
+        }
+    }
+    
+    private fun unregisterLifecycleObserver() {
+        if (lifecycleObserverRegistered) {
+            try {
+                ProcessLifecycleOwner.get().lifecycle.removeObserver(this)
+                lifecycleObserverRegistered = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to unregister lifecycle observer: ${e.message}")
+            }
+        }
+    }
+    
+    // MARK: - DefaultLifecycleObserver
+    
+    override fun onStart(owner: LifecycleOwner) {
+        isInForeground = true
+        logMessage("📱 App came to foreground")
+        
+        // Check if we have pending sync to resume
+        if (secureStorage.isSyncActive() && secureStorage.hasSession()) {
+            logMessage("🔄 Checking for pending sync...")
+            scope.launch {
+                if (syncManager.hasResumableSyncSession()) {
+                    logMessage("📂 Found interrupted sync, resuming...")
+                    baseUrl?.let { url ->
+                        syncManager.syncNow(url, customSyncUrl, fullExport = false)
+                    }
+                }
+            }
+        }
+    }
+    
+    override fun onStop(owner: LifecycleOwner) {
+        isInForeground = false
+        logMessage("📱 App went to background")
+        
+        // Trigger expedited sync when going to background
+        if (secureStorage.isSyncActive() && secureStorage.hasSession()) {
+            baseUrl?.let { url ->
+                logMessage("🚀 Scheduling background sync...")
+                syncManager.scheduleExpeditedSync(url, customSyncUrl)
+            }
+        }
     }
 
     // MARK: - ActivityAware

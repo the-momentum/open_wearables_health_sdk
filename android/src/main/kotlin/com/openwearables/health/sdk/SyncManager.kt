@@ -33,7 +33,7 @@ class SyncManager(
         private const val KEY_COMPLETED_TYPES = "completedTypes"
         
         private const val WORK_NAME_PERIODIC = "health_sync_periodic"
-        private const val CHUNK_SIZE = 1000
+        private const val CHUNK_SIZE = 2000
     }
 
     private val syncPrefs: SharedPreferences by lazy {
@@ -92,6 +92,35 @@ class SyncManager(
         syncNow(baseUrl, customSyncUrl, fullExport = !hasCompletedInitialSync())
 
         return true
+    }
+    
+    /**
+     * Schedule an expedited one-time sync (for when app goes to background)
+     */
+    fun scheduleExpeditedSync(baseUrl: String, customSyncUrl: String?) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val expeditedWork = OneTimeWorkRequestBuilder<HealthSyncWorker>()
+            .setConstraints(constraints)
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setInputData(
+                workDataOf(
+                    HealthSyncWorker.KEY_BASE_URL to baseUrl,
+                    HealthSyncWorker.KEY_CUSTOM_SYNC_URL to customSyncUrl
+                )
+            )
+            .build()
+
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(
+                "health_sync_expedited",
+                ExistingWorkPolicy.REPLACE,
+                expeditedWork
+            )
+        
+        logger("🚀 Scheduled expedited sync")
     }
 
     /**
@@ -196,7 +225,13 @@ class SyncManager(
 
         try {
             val url = "$baseUrl/api/v1/users/$userId/token"
-            val body = gson.toJson(mapOf("app_id" to appId, "app_secret" to appSecret))
+            val bodyMap = mapOf("app_id" to appId, "app_secret" to appSecret)
+            val body = gson.toJson(bodyMap)
+            
+            // Log request (mask secret)
+            val logBody = mapOf("app_id" to appId, "app_secret" to "${appSecret.take(4)}***")
+            logger("📤 Token refresh request: $url")
+            logger("📋 REQUEST PAYLOAD: ${gson.toJson(logBody)}")
             
             val request = Request.Builder()
                 .url(url)
@@ -204,9 +239,11 @@ class SyncManager(
                 .build()
 
             val response = httpClient.newCall(request).execute()
+            val responseBody = response.body?.string()
+            
+            logger("📥 RESPONSE [${response.code}]: $responseBody")
             
             if (response.isSuccessful) {
-                val responseBody = response.body?.string()
                 @Suppress("UNCHECKED_CAST")
                 val json = gson.fromJson(responseBody, Map::class.java) as? Map<String, Any>
                 val newToken = json?.get("access_token") as? String
@@ -230,11 +267,19 @@ class SyncManager(
 
     // MARK: - Data Sending
 
+    // Pretty-printing Gson for logging
+    private val prettyGson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+
     private suspend fun sendData(endpoint: String, accessToken: String, payload: Map<String, Any>): Boolean = 
         withContext(Dispatchers.IO) {
             try {
                 val jsonBody = gson.toJson(payload)
+                val prettyJson = prettyGson.toJson(payload)
+                
                 logger("📊 Payload size: ${jsonBody.length / 1024} KB")
+                logger("📤 Endpoint: $endpoint")
+                logger("🔑 Authorization: ${accessToken.take(20)}...")
+                logger("📋 REQUEST PAYLOAD:\n$prettyJson")
 
                 val request = Request.Builder()
                     .url(endpoint)
@@ -244,6 +289,9 @@ class SyncManager(
                     .build()
 
                 val response = httpClient.newCall(request).execute()
+                val responseBody = response.body?.string()
+                
+                logger("📥 RESPONSE [${response.code}]: $responseBody")
                 
                 if (response.isSuccessful) {
                     return@withContext true
@@ -382,6 +430,8 @@ class HealthSyncWorker(
     companion object {
         const val KEY_BASE_URL = "baseUrl"
         const val KEY_CUSTOM_SYNC_URL = "customSyncUrl"
+        private const val NOTIFICATION_ID = 9001
+        private const val CHANNEL_ID = "health_sync_channel"
     }
 
     override suspend fun doWork(): Result {
@@ -407,6 +457,38 @@ class HealthSyncWorker(
         } catch (e: Exception) {
             android.util.Log.e("HealthSyncWorker", "Sync failed", e)
             Result.retry()
+        }
+    }
+    
+    /**
+     * Required for expedited work - provides foreground notification info
+     */
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        createNotificationChannel()
+        
+        val notification = androidx.core.app.NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setContentTitle("Health Sync")
+            .setContentText("Syncing health data...")
+            .setSmallIcon(android.R.drawable.ic_popup_sync)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+        
+        return ForegroundInfo(NOTIFICATION_ID, notification)
+    }
+    
+    private fun createNotificationChannel() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                CHANNEL_ID,
+                "Health Sync",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Background health data synchronization"
+            }
+            
+            val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            notificationManager.createNotificationChannel(channel)
         }
     }
 }

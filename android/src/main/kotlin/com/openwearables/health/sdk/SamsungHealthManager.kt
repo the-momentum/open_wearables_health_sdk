@@ -344,6 +344,13 @@ class SamsungHealthManager(
 
             // Extract value based on type
             val (value, unit) = extractValueAndUnit(typeId, dataPoint)
+            
+            // Extract additional metadata for specific types
+            val metadata = when (typeId) {
+                "workout" -> extractWorkoutMetadata(dataPoint)
+                "sleep" -> extractSleepMetadata(dataPoint)
+                else -> emptyList()
+            }
 
             HealthDataRecord(
                 uuid = uuid,
@@ -353,11 +360,224 @@ class SamsungHealthManager(
                 startDate = startTime,
                 endDate = endTime,
                 source = parseDataSource(source),
-                metadata = emptyList()
+                metadata = metadata
             )
         } catch (e: Exception) {
             logger("⚠️ Failed to parse $typeId record: ${e.message}")
             null
+        }
+    }
+    
+    /**
+     * Extract all available workout/exercise metadata fields.
+     */
+    private fun extractWorkoutMetadata(dataPoint: HealthDataPoint): List<HealthDataMetadata> {
+        val metadata = mutableListOf<HealthDataMetadata>()
+        
+        try {
+            // Exercise type - returns PredefinedExerciseType enum, not Integer
+            val exerciseType = getFieldValue<Any>(DataTypes.EXERCISE, "EXERCISE_TYPE", dataPoint)
+            if (exerciseType != null) {
+                val typeName = exerciseType.toString()
+                metadata.add(HealthDataMetadata("exerciseType", typeName))
+                metadata.add(HealthDataMetadata("exerciseTypeName", typeName))
+                logger("🏃 Exercise type: $typeName")
+            }
+            
+            // Total calories (aggregated field on exercise)
+            val totalCalories = getFieldValue<Float>(DataTypes.EXERCISE, "TOTAL_CALORIES", dataPoint)
+            if (totalCalories != null && totalCalories > 0) {
+                metadata.add(HealthDataMetadata("calories", totalCalories.toString()))
+                metadata.add(HealthDataMetadata("caloriesUnit", "kcal"))
+                logger("🔥 Total calories: $totalCalories")
+            }
+            
+            // Total duration (aggregated field on exercise)
+            val totalDuration = getFieldValue<Long>(DataTypes.EXERCISE, "TOTAL_DURATION", dataPoint)
+            if (totalDuration != null && totalDuration > 0) {
+                metadata.add(HealthDataMetadata("duration", totalDuration.toString()))
+                metadata.add(HealthDataMetadata("durationUnit", "ms"))
+                logger("⏱️ Total duration: $totalDuration ms")
+            }
+            
+            // Custom title
+            val customTitle = getFieldValue<String>(DataTypes.EXERCISE, "CUSTOM_TITLE", dataPoint)
+            if (customTitle != null && customTitle.isNotEmpty()) {
+                metadata.add(HealthDataMetadata("title", customTitle))
+                logger("📝 Custom title: $customTitle")
+            }
+            
+            // SESSIONS contains the detailed workout data (ExerciseSession objects)
+            val sessions = getFieldValue<List<*>>(DataTypes.EXERCISE, "SESSIONS", dataPoint)
+            if (sessions != null && sessions.isNotEmpty()) {
+                logger("📋 Found ${sessions.size} exercise session(s)")
+                
+                // Extract data from the first session (usually there's only one)
+                val session = sessions.firstOrNull()
+                if (session != null) {
+                    extractExerciseSessionData(session, metadata)
+                }
+            }
+            
+            logger("📊 Extracted ${metadata.size} workout metadata fields")
+            
+        } catch (e: Exception) {
+            logger("⚠️ Error extracting workout metadata: ${e.message}")
+            e.printStackTrace()
+        }
+        
+        return metadata
+    }
+    
+    /**
+     * Extract data from ExerciseSession object using reflection.
+     */
+    private fun extractExerciseSessionData(session: Any, metadata: MutableList<HealthDataMetadata>) {
+        try {
+            val sessionClass = session.javaClass
+            logger("🔍 Session class: ${sessionClass.name}")
+            
+            // Log all available getters on session
+            val getters = sessionClass.methods.filter { 
+                it.name.startsWith("get") && it.parameterCount == 0 
+            }
+            logger("🔍 Session methods: ${getters.map { it.name }.joinToString(", ")}")
+            
+            // Try to extract common fields from session
+            for (method in getters) {
+                try {
+                    val value = method.invoke(session)
+                    if (value != null && value.toString().isNotEmpty() && value.toString() != "null" && value.toString() != "0" && value.toString() != "0.0") {
+                        val fieldName = method.name.removePrefix("get").replaceFirstChar { it.lowercase() }
+                        logger("🔍 Session.$fieldName = $value (${value.javaClass.simpleName})")
+                        
+                        // Add to metadata based on field name
+                        when {
+                            fieldName.contains("calorie", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("calories", value.toString()))
+                                metadata.add(HealthDataMetadata("caloriesUnit", "kcal"))
+                            }
+                            fieldName.contains("distance", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("distance", value.toString()))
+                                metadata.add(HealthDataMetadata("distanceUnit", "m"))
+                            }
+                            fieldName.contains("duration", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("sessionDuration", value.toString()))
+                                metadata.add(HealthDataMetadata("sessionDurationUnit", "ms"))
+                            }
+                            fieldName.contains("speed", ignoreCase = true) && fieldName.contains("mean", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("meanSpeed", value.toString()))
+                                metadata.add(HealthDataMetadata("meanSpeedUnit", "m/s"))
+                            }
+                            fieldName.contains("speed", ignoreCase = true) && fieldName.contains("max", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("maxSpeed", value.toString()))
+                                metadata.add(HealthDataMetadata("maxSpeedUnit", "m/s"))
+                            }
+                            fieldName.contains("heartRate", ignoreCase = true) && fieldName.contains("mean", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("meanHeartRate", value.toString()))
+                                metadata.add(HealthDataMetadata("meanHeartRateUnit", "bpm"))
+                            }
+                            fieldName.contains("heartRate", ignoreCase = true) && fieldName.contains("max", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("maxHeartRate", value.toString()))
+                                metadata.add(HealthDataMetadata("maxHeartRateUnit", "bpm"))
+                            }
+                            fieldName.contains("cadence", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("cadence", value.toString()))
+                                metadata.add(HealthDataMetadata("cadenceUnit", "spm"))
+                            }
+                            fieldName.contains("altitude", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata(fieldName, value.toString()))
+                                metadata.add(HealthDataMetadata("${fieldName}Unit", "m"))
+                            }
+                            fieldName.contains("step", ignoreCase = true) || fieldName.contains("count", ignoreCase = true) -> {
+                                metadata.add(HealthDataMetadata("stepCount", value.toString()))
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore errors for individual fields
+                }
+            }
+            
+        } catch (e: Exception) {
+            logger("⚠️ Error extracting session data: ${e.message}")
+        }
+    }
+    
+    /**
+     * Extract sleep metadata fields.
+     */
+    private fun extractSleepMetadata(dataPoint: HealthDataPoint): List<HealthDataMetadata> {
+        val metadata = mutableListOf<HealthDataMetadata>()
+        
+        try {
+            // Sleep stage
+            val sleepStage = getFieldValue<Int>(DataTypes.SLEEP, "STAGE", dataPoint)
+            if (sleepStage != null) {
+                metadata.add(HealthDataMetadata("sleepStage", sleepStage.toString()))
+                metadata.add(HealthDataMetadata("sleepStageName", getSleepStageName(sleepStage)))
+            }
+            
+            // Sleep efficiency
+            val efficiency = getFieldValue<Float>(DataTypes.SLEEP, "EFFICIENCY", dataPoint)
+            if (efficiency != null && efficiency > 0) {
+                metadata.add(HealthDataMetadata("efficiency", efficiency.toString()))
+                metadata.add(HealthDataMetadata("efficiencyUnit", "%"))
+            }
+            
+        } catch (e: Exception) {
+            logger("⚠️ Error extracting sleep metadata: ${e.message}")
+        }
+        
+        return metadata
+    }
+    
+    /**
+     * Convert exercise type code to human-readable name.
+     */
+    private fun getExerciseTypeName(type: Int): String {
+        return when (type) {
+            1 -> "Walking"
+            2 -> "Running"
+            3 -> "Cycling"
+            4 -> "Hiking"
+            5 -> "Swimming"
+            6 -> "Rowing"
+            7 -> "Elliptical"
+            8 -> "Stair_Climbing"
+            9 -> "Aerobics"
+            10 -> "Pilates"
+            11 -> "Yoga"
+            12 -> "Stretching"
+            13 -> "Strength_Training"
+            14 -> "Dancing"
+            15 -> "Badminton"
+            16 -> "Tennis"
+            17 -> "Table_Tennis"
+            18 -> "Basketball"
+            19 -> "Soccer"
+            20 -> "Volleyball"
+            21 -> "Golf"
+            22 -> "Skiing"
+            23 -> "Snowboarding"
+            24 -> "Skating"
+            25 -> "Martial_Arts"
+            26 -> "Boxing"
+            1001 -> "Other"
+            else -> "Unknown_$type"
+        }
+    }
+    
+    /**
+     * Convert sleep stage code to human-readable name.
+     */
+    private fun getSleepStageName(stage: Int): String {
+        return when (stage) {
+            1 -> "Awake"
+            2 -> "Light"
+            3 -> "Deep"
+            4 -> "REM"
+            else -> "Unknown_$stage"
         }
     }
 
@@ -441,6 +661,66 @@ class SamsungHealthManager(
             getValueMethod.invoke(dataPoint, field) as? T
         } catch (e: Exception) {
             null
+        }
+    }
+    
+    /**
+     * Get field value with detailed logging for debugging.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> getFieldValueWithLog(dataType: DataType, fieldName: String, dataPoint: HealthDataPoint): T? {
+        return try {
+            // Get the Field constant from the DataType class
+            val javaField = dataType.javaClass.getField(fieldName)
+            val field = javaField.get(dataType)
+            logger("🔍 Field $fieldName found: ${field?.javaClass?.name}")
+            
+            // Call dataPoint.getValue(field)
+            val getValueMethod = dataPoint.javaClass.getMethod("getValue", com.samsung.android.sdk.health.data.data.Field::class.java)
+            val result = getValueMethod.invoke(dataPoint, field) as? T
+            logger("🔍 Field $fieldName value: $result")
+            result
+        } catch (e: NoSuchFieldException) {
+            logger("⚠️ Field $fieldName not found in ${dataType.javaClass.name}")
+            null
+        } catch (e: Exception) {
+            logger("⚠️ Error getting field $fieldName: ${e.javaClass.simpleName} - ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * Log all available fields from a DataType for debugging purposes.
+     * This helps discover what data is available from Samsung Health.
+     */
+    private fun logAvailableFields(dataPoint: HealthDataPoint, dataType: DataType) {
+        try {
+            val fields = dataType.javaClass.fields
+            val availableFields = mutableListOf<String>()
+            
+            for (field in fields) {
+                try {
+                    val fieldObj = field.get(dataType)
+                    if (fieldObj is com.samsung.android.sdk.health.data.data.Field<*>) {
+                        val getValueMethod = dataPoint.javaClass.getMethod(
+                            "getValue", 
+                            com.samsung.android.sdk.health.data.data.Field::class.java
+                        )
+                        val value = getValueMethod.invoke(dataPoint, fieldObj)
+                        if (value != null) {
+                            availableFields.add("${field.name}=$value")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Field not available or error
+                }
+            }
+            
+            if (availableFields.isNotEmpty()) {
+                logger("🔍 Available fields: ${availableFields.joinToString(", ")}")
+            }
+        } catch (e: Exception) {
+            logger("⚠️ Could not inspect fields: ${e.message}")
         }
     }
 

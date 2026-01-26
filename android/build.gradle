@@ -65,6 +65,10 @@ android {
         // WorkManager for background sync
         implementation("androidx.work:work-runtime-ktx:2.9.0")
         
+        // Lifecycle for detecting app foreground/background
+        implementation("androidx.lifecycle:lifecycle-process:2.7.0")
+        implementation("androidx.lifecycle:lifecycle-common:2.7.0")
+        
         // Security for EncryptedSharedPreferences
         implementation("androidx.security:security-crypto:1.1.0-alpha06")
         
