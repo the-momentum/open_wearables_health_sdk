@@ -157,8 +157,8 @@ class _HomePageState extends State<HomePage> {
     setState(() => _isLoading = true);
 
     try {
-      final fullSyncUrl = '$baseUrl/sdk/users/{user_id}/sync/apple';
-      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
+      // Let SDK use the correct platform-specific endpoint (samsung for Android, apple for iOS)
+      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production);
       _checkStatus();
 
       _setStatus('Signing in...');

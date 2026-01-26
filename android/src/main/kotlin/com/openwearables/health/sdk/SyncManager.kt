@@ -354,7 +354,7 @@ class SyncManager(
                 .replace("{userId}", userId)
                 .replace("{user_id}", userId)
         }
-        return "$baseUrl/sdk/users/$userId/sync/samsung/healthion"
+        return "$baseUrl/sdk/users/$userId/sync/samsung"
     }
 
     // MARK: - Anchors (timestamps for incremental sync)
