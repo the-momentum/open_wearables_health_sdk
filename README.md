@@ -2,6 +2,8 @@
 
 A Flutter plugin for secure background health data synchronization from Apple HealthKit (iOS) to the Open Wearables platform.
 
+> **Part of [Open Wearables](https://github.com/the-momentum/open-wearables)** - a self-hosted platform to unify wearable health data through one AI-ready API.
+
 ## Features
 
 - 🔐 **Simple Token Authentication** - Backend generates accessToken, SDK uses it directly
