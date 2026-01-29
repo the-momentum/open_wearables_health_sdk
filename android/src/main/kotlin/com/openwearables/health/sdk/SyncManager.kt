@@ -4,15 +4,43 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.work.*
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
+
+/**
+ * Progress tracking per data type
+ */
+data class TypeSyncProgress(
+    val typeIdentifier: String,
+    var sentCount: Int = 0,
+    var isComplete: Boolean = false,
+    var pendingAnchorTimestamp: Long? = null
+)
+
+/**
+ * Sync state - tracks progress per type for resume capability
+ */
+data class SyncState(
+    val userKey: String,
+    val fullExport: Boolean,
+    val createdAt: Long,
+    var typeProgress: MutableMap<String, TypeSyncProgress> = mutableMapOf(),
+    var totalSentCount: Int = 0,
+    var completedTypes: MutableSet<String> = mutableSetOf(),
+    var currentTypeIndex: Int = 0
+) {
+    val hasProgress: Boolean
+        get() = totalSentCount > 0 || completedTypes.isNotEmpty()
+}
 
 /**
  * Manages health data synchronization
@@ -26,14 +54,19 @@ class SyncManager(
     companion object {
         private const val SYNC_PREFS_NAME = "com.openwearables.healthsdk.sync"
         private const val KEY_ANCHORS = "anchors"
-        private const val KEY_SYNC_SESSION = "syncSession"
-        private const val KEY_SENT_COUNT = "sentCount"
-        private const val KEY_IS_FULL_EXPORT = "isFullExport"
-        private const val KEY_CREATED_AT = "createdAt"
-        private const val KEY_COMPLETED_TYPES = "completedTypes"
+        private const val KEY_FULL_EXPORT_DONE = "fullExportDone"
         
         private const val WORK_NAME_PERIODIC = "health_sync_periodic"
+        private const val WORK_NAME_TESTING = "health_sync_testing"
         private const val CHUNK_SIZE = 2000
+        
+        // Testing mode: 1-minute interval (WorkManager minimum is 15 min for periodic, so we use chained one-time requests)
+        private const val TESTING_INTERVAL_MINUTES = 1L
+        private const val TESTING_MODE = true // Set to false for production (15 min intervals)
+        
+        // Sync state file
+        private const val SYNC_STATE_DIR = "health_sync_state"
+        private const val SYNC_STATE_FILE = "state.json"
     }
 
     private val syncPrefs: SharedPreferences by lazy {
@@ -52,6 +85,13 @@ class SyncManager(
     }
 
     private var isSyncing = false
+    
+    // MARK: - User Key
+    
+    private fun userKey(): String {
+        val userId = secureStorage.getUserId()
+        return if (userId.isNullOrEmpty()) "user.none" else "user.$userId"
+    }
 
     // MARK: - Background Sync
 
@@ -65,33 +105,65 @@ class SyncManager(
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
-            val periodicWork = PeriodicWorkRequestBuilder<HealthSyncWorker>(
-                15, TimeUnit.MINUTES,
-                5, TimeUnit.MINUTES
-            )
-                .setConstraints(constraints)
-                .setInputData(
-                    workDataOf(
-                        HealthSyncWorker.KEY_BASE_URL to baseUrl,
-                        HealthSyncWorker.KEY_CUSTOM_SYNC_URL to customSyncUrl
+            if (TESTING_MODE) {
+                // Testing mode: Use chained OneTimeWorkRequests for 1-minute intervals
+                // (WorkManager's PeriodicWorkRequest has a minimum of 15 minutes)
+                scheduleTestingSync(baseUrl, customSyncUrl, constraints)
+                logger("🧪 TESTING MODE: Scheduled sync every $TESTING_INTERVAL_MINUTES minute(s)")
+            } else {
+                // Production mode: Use standard 15-minute periodic sync
+                val periodicWork = PeriodicWorkRequestBuilder<HealthSyncWorker>(
+                    15, TimeUnit.MINUTES,
+                    5, TimeUnit.MINUTES
+                )
+                    .setConstraints(constraints)
+                    .setInputData(
+                        workDataOf(
+                            HealthSyncWorker.KEY_BASE_URL to baseUrl,
+                            HealthSyncWorker.KEY_CUSTOM_SYNC_URL to customSyncUrl
+                        )
                     )
-                )
-                .build()
+                    .build()
 
-            WorkManager.getInstance(context)
-                .enqueueUniquePeriodicWork(
-                    WORK_NAME_PERIODIC,
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    periodicWork
-                )
+                WorkManager.getInstance(context)
+                    .enqueueUniquePeriodicWork(
+                        WORK_NAME_PERIODIC,
+                        ExistingPeriodicWorkPolicy.UPDATE,
+                        periodicWork
+                    )
 
-            logger("📅 Scheduled periodic sync every 15 minutes")
+                logger("📅 Scheduled periodic sync every 15 minutes")
+            }
         }
 
         // Initial sync
         syncNow(baseUrl, customSyncUrl, fullExport = !hasCompletedInitialSync())
 
         return true
+    }
+    
+    /**
+     * Schedule testing sync with 1-minute intervals using chained OneTimeWorkRequests
+     */
+    private fun scheduleTestingSync(baseUrl: String, customSyncUrl: String?, constraints: Constraints) {
+        val oneTimeWork = OneTimeWorkRequestBuilder<HealthSyncWorker>()
+            .setConstraints(constraints)
+            .setInitialDelay(TESTING_INTERVAL_MINUTES, TimeUnit.MINUTES)
+            .setInputData(
+                workDataOf(
+                    HealthSyncWorker.KEY_BASE_URL to baseUrl,
+                    HealthSyncWorker.KEY_CUSTOM_SYNC_URL to customSyncUrl,
+                    HealthSyncWorker.KEY_TESTING_MODE to true
+                )
+            )
+            .build()
+
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(
+                WORK_NAME_TESTING,
+                ExistingWorkPolicy.REPLACE,
+                oneTimeWork
+            )
     }
     
     /**
@@ -129,6 +201,7 @@ class SyncManager(
     suspend fun stopBackgroundSync() {
         withContext(Dispatchers.Main) {
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME_PERIODIC)
+            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME_TESTING)
             logger("🛑 Cancelled periodic sync")
         }
     }
@@ -136,7 +209,7 @@ class SyncManager(
     // MARK: - Sync Now
 
     /**
-     * Perform sync now
+     * Perform sync now with session management and resume capability
      */
     suspend fun syncNow(baseUrl: String, customSyncUrl: String?, fullExport: Boolean) {
         if (isSyncing) {
@@ -148,7 +221,7 @@ class SyncManager(
 
         try {
             val userId = secureStorage.getUserId()
-            val accessToken = secureStorage.getAccessToken()
+            var accessToken = secureStorage.getAccessToken()
 
             if (userId == null || accessToken == null) {
                 logger("❌ No credentials for sync")
@@ -162,45 +235,128 @@ class SyncManager(
                     logger("❌ Token refresh failed")
                     return
                 }
+                accessToken = secureStorage.getAccessToken()
             }
 
             val endpoint = buildSyncEndpoint(baseUrl, customSyncUrl, userId)
-            logger("🔄 Starting sync (fullExport: $fullExport)")
-
-            // Collect and sync data
-            val trackedTypes = healthManager.getTrackedTypes()
+            
+            // Get tracked types as list for indexed access
+            val trackedTypes = healthManager.getTrackedTypes().toList()
             if (trackedTypes.isEmpty()) {
                 logger("⚠️ No tracked types configured")
                 return
             }
 
-            // Load anchors
-            val anchors = if (fullExport) emptyMap() else loadAnchors()
-
-            // Read data from Samsung Health
-            val data = healthManager.readAllData(anchors, CHUNK_SIZE)
+            // Check if we're resuming an interrupted sync
+            val existingState = loadSyncState()
+            val isResuming = existingState != null && existingState.hasProgress
             
-            if (data.isEmpty()) {
-                logger("✅ No new data to sync")
-                return
-            }
-
-            // Send data to server
-            val totalRecords = data.values.sumOf { it.size }
-            logger("📤 Sending $totalRecords records...")
-
-            val payload = buildPayload(data)
-            val success = sendData(endpoint, accessToken, payload)
-
-            if (success) {
-                // Update anchors with latest timestamps
-                updateAnchors(data)
-                logger("✅ Sync completed: $totalRecords records sent")
+            if (isResuming) {
+                logger("🔄 Resuming sync (${existingState!!.totalSentCount} already sent, ${existingState.completedTypes.size} types done)")
             } else {
-                logger("❌ Sync failed")
+                logger("🔄 Starting streaming sync (fullExport: $fullExport, ${trackedTypes.size} types)")
+                startNewSyncState(fullExport, trackedTypes)
             }
+            
+            // Get starting index for resume
+            val startIndex = if (isResuming) getResumeTypeIndex() else 0
+            
+            // Process types sequentially
+            processTypesSequentially(
+                types = trackedTypes,
+                typeIndex = startIndex,
+                fullExport = fullExport,
+                endpoint = endpoint,
+                token = accessToken!!
+            )
+            
         } finally {
             isSyncing = false
+        }
+    }
+    
+    /**
+     * Process types one by one - streaming approach
+     */
+    private suspend fun processTypesSequentially(
+        types: List<String>,
+        typeIndex: Int,
+        fullExport: Boolean,
+        endpoint: String,
+        token: String
+    ) {
+        if (typeIndex >= types.size) {
+            // All types processed
+            finalizeSyncState()
+            return
+        }
+        
+        val type = types[typeIndex]
+        
+        // Skip already completed types
+        if (!shouldSyncType(type)) {
+            logger("⏭️ Skipping $type - already synced")
+            processTypesSequentially(types, typeIndex + 1, fullExport, endpoint, token)
+            return
+        }
+        
+        // Update current type index for resume
+        updateCurrentTypeIndex(typeIndex)
+        
+        // Process this type
+        val success = processType(type, fullExport, endpoint, token)
+        
+        if (success) {
+            // Continue to next type
+            processTypesSequentially(types, typeIndex + 1, fullExport, endpoint, token)
+        } else {
+            // Failed - will resume from this type later
+            logger("⚠️ Sync paused at $type, will resume later")
+        }
+    }
+    
+    /**
+     * Process a single type - fetch and send data
+     */
+    private suspend fun processType(
+        type: String,
+        fullExport: Boolean,
+        endpoint: String,
+        token: String
+    ): Boolean {
+        val anchors = if (fullExport) emptyMap() else loadAnchors()
+        val anchor = anchors[type]
+        
+        logger("📊 $type: querying...")
+        
+        // Read data for this type using existing readData method
+        val data = healthManager.readData(type, anchor, CHUNK_SIZE)
+        
+        if (data.isEmpty()) {
+            logger("  $type: ✓ complete (no new data)")
+            updateTypeProgress(type, 0, isComplete = true, anchorTimestamp = null)
+            return true
+        }
+        
+        logger("  $type: ${data.size} samples")
+        
+        // Build payload for this type
+        val payload = buildPayload(mapOf(type to data))
+        
+        // Get max timestamp for anchor
+        val maxTimestamp = data.maxOfOrNull { it.endDate }
+        
+        // Send data
+        val success = sendData(endpoint, token, payload)
+        
+        if (success) {
+            // Update progress
+            updateTypeProgress(type, data.size, isComplete = true, anchorTimestamp = maxTimestamp)
+            logger("  $type: ✓ sent ${data.size} records")
+            return true
+        } else {
+            logger("  $type: ❌ upload failed")
+            return false
         }
     }
 
@@ -350,14 +506,24 @@ class SyncManager(
 
     private fun buildSyncEndpoint(baseUrl: String, customSyncUrl: String?, userId: String): String {
         if (customSyncUrl != null) {
-            return customSyncUrl
-                .replace("{userId}", userId)
-                .replace("{user_id}", userId)
+            // If custom URL contains placeholder, use it directly
+            if (customSyncUrl.contains("{user_id}") || customSyncUrl.contains("{userId}")) {
+                return customSyncUrl
+                    .replace("{userId}", userId)
+                    .replace("{user_id}", userId)
+            }
+            // Otherwise treat as base URL and append path
+            val normalizedBase = customSyncUrl.trimEnd('/')
+            return "$normalizedBase/sdk/users/$userId/sync/samsung"
         }
-        return "$baseUrl/sdk/users/$userId/sync/samsung"
+        return "$baseUrl/api/v1/sdk/users/$userId/sync/samsung"
     }
 
     // MARK: - Anchors (timestamps for incremental sync)
+
+    private fun anchorKey(type: String): String = "anchor.${userKey()}.$type"
+    
+    private fun fullDoneKey(): String = "fullDone.${userKey()}"
 
     private fun loadAnchors(): Map<String, Long> {
         val json = syncPrefs.getString(KEY_ANCHORS, null) ?: return emptyMap()
@@ -369,53 +535,203 @@ class SyncManager(
             emptyMap()
         }
     }
-
-    private fun updateAnchors(data: Map<String, List<HealthDataRecord>>) {
+    
+    private fun saveAnchor(type: String, timestamp: Long) {
         val currentAnchors = loadAnchors().toMutableMap()
-        
-        for ((type, records) in data) {
-            val maxTimestamp = records.maxOfOrNull { it.endDate }
-            if (maxTimestamp != null) {
-                currentAnchors[type] = maxTimestamp
-            }
-        }
-
+        currentAnchors[type] = timestamp
         val json = gson.toJson(currentAnchors)
         syncPrefs.edit().putString(KEY_ANCHORS, json).apply()
     }
 
     fun resetAnchors() {
-        syncPrefs.edit().remove(KEY_ANCHORS).apply()
-        logger("🔄 Anchors reset")
+        syncPrefs.edit()
+            .remove(KEY_ANCHORS)
+            .putBoolean(fullDoneKey(), false)
+            .apply()
+        clearSyncSession()
+        logger("🔄 Anchors reset - will perform full sync on next sync")
     }
 
     private fun hasCompletedInitialSync(): Boolean {
-        return syncPrefs.getString(KEY_ANCHORS, null) != null
+        return syncPrefs.getBoolean(fullDoneKey(), false)
+    }
+    
+    private fun markFullExportDone() {
+        syncPrefs.edit().putBoolean(fullDoneKey(), true).apply()
+    }
+
+    // MARK: - Sync State File Management
+    
+    private fun syncStateDir(): File {
+        return File(context.filesDir, SYNC_STATE_DIR).also { 
+            if (!it.exists()) it.mkdirs() 
+        }
+    }
+    
+    private fun syncStateFile(): File = File(syncStateDir(), SYNC_STATE_FILE)
+    
+    // MARK: - Save/Load Sync State
+    
+    private fun saveSyncState(state: SyncState) {
+        try {
+            val json = gson.toJson(state)
+            syncStateFile().writeText(json)
+        } catch (e: Exception) {
+            logger("❌ Failed to save sync state: ${e.message}")
+        }
+    }
+    
+    private fun loadSyncState(): SyncState? {
+        return try {
+            val file = syncStateFile()
+            if (!file.exists()) return null
+            
+            val json = file.readText()
+            val state = gson.fromJson(json, SyncState::class.java)
+            
+            // Verify state belongs to current user
+            if (state.userKey != userKey()) {
+                logger("⚠️ Sync state for different user, clearing")
+                clearSyncSession()
+                return null
+            }
+            
+            state
+        } catch (e: Exception) {
+            logger("❌ Failed to load sync state: ${e.message}")
+            null
+        }
+    }
+    
+    // MARK: - Start New Sync State
+    
+    private fun startNewSyncState(fullExport: Boolean, types: List<String>): SyncState {
+        val state = SyncState(
+            userKey = userKey(),
+            fullExport = fullExport,
+            createdAt = System.currentTimeMillis(),
+            typeProgress = mutableMapOf(),
+            totalSentCount = 0,
+            completedTypes = mutableSetOf(),
+            currentTypeIndex = 0
+        )
+        
+        saveSyncState(state)
+        return state
+    }
+    
+    // MARK: - Update Progress
+    
+    /**
+     * Update progress for a specific type after sending a chunk
+     */
+    private fun updateTypeProgress(typeIdentifier: String, sentInChunk: Int, isComplete: Boolean, anchorTimestamp: Long?) {
+        val state = loadSyncState() ?: return
+        
+        var progress = state.typeProgress[typeIdentifier] ?: TypeSyncProgress(
+            typeIdentifier = typeIdentifier,
+            sentCount = 0,
+            isComplete = false,
+            pendingAnchorTimestamp = null
+        )
+        
+        progress.sentCount += sentInChunk
+        progress.isComplete = isComplete
+        if (anchorTimestamp != null) {
+            progress.pendingAnchorTimestamp = anchorTimestamp
+        }
+        
+        state.typeProgress[typeIdentifier] = progress
+        state.totalSentCount += sentInChunk
+        
+        if (isComplete) {
+            state.completedTypes.add(typeIdentifier)
+            // Save anchor immediately when type is complete
+            progress.pendingAnchorTimestamp?.let { timestamp ->
+                saveAnchor(typeIdentifier, timestamp)
+            }
+        }
+        
+        saveSyncState(state)
+    }
+    
+    /**
+     * Mark current type index for resume
+     */
+    private fun updateCurrentTypeIndex(index: Int) {
+        val state = loadSyncState() ?: return
+        state.currentTypeIndex = index
+        saveSyncState(state)
+    }
+    
+    // MARK: - Finalize Sync
+    
+    private fun finalizeSyncState() {
+        val state = loadSyncState() ?: return
+        
+        // Mark full export as complete if needed
+        if (state.fullExport) {
+            markFullExportDone()
+            logger("✅ Marked full export complete")
+        }
+        
+        logger("✅ Sync complete: ${state.totalSentCount} samples across ${state.completedTypes.size} types")
+        
+        // Clear state
+        clearSyncSession()
     }
 
     // MARK: - Sync Session Management
+    
+    /**
+     * Check if a specific type needs to be synced (not yet completed)
+     */
+    private fun shouldSyncType(typeIdentifier: String): Boolean {
+        val state = loadSyncState() ?: return true
+        return !state.completedTypes.contains(typeIdentifier)
+    }
+    
+    /**
+     * Get the starting type index for resume
+     */
+    private fun getResumeTypeIndex(): Int {
+        val state = loadSyncState() ?: return 0
+        return state.currentTypeIndex
+    }
 
     fun getSyncStatus(): Map<String, Any?> {
-        return mapOf(
-            "hasResumableSession" to hasResumableSyncSession(),
-            "sentCount" to syncPrefs.getInt(KEY_SENT_COUNT, 0),
-            "isFullExport" to syncPrefs.getBoolean(KEY_IS_FULL_EXPORT, false),
-            "createdAt" to syncPrefs.getString(KEY_CREATED_AT, null)
-        )
+        val state = loadSyncState()
+        return if (state != null) {
+            mapOf(
+                "hasResumableSession" to state.hasProgress,
+                "sentCount" to state.totalSentCount,
+                "completedTypes" to state.completedTypes.size,
+                "isFullExport" to state.fullExport,
+                "createdAt" to dateFormat.format(Date(state.createdAt))
+            )
+        } else {
+            mapOf(
+                "hasResumableSession" to false,
+                "sentCount" to 0,
+                "completedTypes" to 0,
+                "isFullExport" to false,
+                "createdAt" to null
+            )
+        }
     }
 
     fun hasResumableSyncSession(): Boolean {
-        return syncPrefs.contains(KEY_SYNC_SESSION)
+        val state = loadSyncState() ?: return false
+        return state.hasProgress
     }
 
     fun clearSyncSession() {
-        syncPrefs.edit()
-            .remove(KEY_SYNC_SESSION)
-            .remove(KEY_SENT_COUNT)
-            .remove(KEY_IS_FULL_EXPORT)
-            .remove(KEY_CREATED_AT)
-            .remove(KEY_COMPLETED_TYPES)
-            .apply()
+        try {
+            syncStateFile().delete()
+            logger("🧹 Cleared sync state")
+        } catch (e: Exception) {
+            logger("❌ Failed to clear sync state: ${e.message}")
+        }
     }
 }
 
@@ -430,13 +746,17 @@ class HealthSyncWorker(
     companion object {
         const val KEY_BASE_URL = "baseUrl"
         const val KEY_CUSTOM_SYNC_URL = "customSyncUrl"
+        const val KEY_TESTING_MODE = "testingMode"
         private const val NOTIFICATION_ID = 9001
         private const val CHANNEL_ID = "health_sync_channel"
+        private const val WORK_NAME_TESTING = "health_sync_testing"
+        private const val TESTING_INTERVAL_MINUTES = 1L
     }
 
     override suspend fun doWork(): Result {
         val baseUrl = inputData.getString(KEY_BASE_URL) ?: return Result.failure()
         val customSyncUrl = inputData.getString(KEY_CUSTOM_SYNC_URL)
+        val isTestingMode = inputData.getBoolean(KEY_TESTING_MODE, false)
 
         val secureStorage = SecureStorage(applicationContext)
         val healthManager = SamsungHealthManager(applicationContext, null) { 
@@ -452,12 +772,55 @@ class HealthSyncWorker(
             healthManager.setTrackedTypes(trackedTypes)
 
             // Perform sync
+            android.util.Log.d("HealthSyncWorker", "🔄 Background sync triggered (testing mode: $isTestingMode)")
             syncManager.syncNow(baseUrl, customSyncUrl, fullExport = false)
+            
+            // If in testing mode, schedule the next sync after 1 minute
+            if (isTestingMode) {
+                scheduleNextTestingSync(baseUrl, customSyncUrl)
+            }
+            
             Result.success()
         } catch (e: Exception) {
             android.util.Log.e("HealthSyncWorker", "Sync failed", e)
+            
+            // Even if sync failed, reschedule in testing mode
+            if (isTestingMode) {
+                scheduleNextTestingSync(baseUrl, customSyncUrl)
+            }
+            
             Result.retry()
         }
+    }
+    
+    /**
+     * Schedule the next testing sync after 1 minute
+     */
+    private fun scheduleNextTestingSync(baseUrl: String, customSyncUrl: String?) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val nextWork = OneTimeWorkRequestBuilder<HealthSyncWorker>()
+            .setConstraints(constraints)
+            .setInitialDelay(TESTING_INTERVAL_MINUTES, TimeUnit.MINUTES)
+            .setInputData(
+                workDataOf(
+                    KEY_BASE_URL to baseUrl,
+                    KEY_CUSTOM_SYNC_URL to customSyncUrl,
+                    KEY_TESTING_MODE to true
+                )
+            )
+            .build()
+
+        WorkManager.getInstance(applicationContext)
+            .enqueueUniqueWork(
+                WORK_NAME_TESTING,
+                ExistingWorkPolicy.REPLACE,
+                nextWork
+            )
+        
+        android.util.Log.d("HealthSyncWorker", "🧪 Next testing sync scheduled in $TESTING_INTERVAL_MINUTES minute(s)")
     }
     
     /**
