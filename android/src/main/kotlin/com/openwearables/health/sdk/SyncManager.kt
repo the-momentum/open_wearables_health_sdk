@@ -343,8 +343,8 @@ class SyncManager(
         // Build payload for this type
         val payload = buildPayload(mapOf(type to data))
         
-        // Get max timestamp for anchor
-        val maxTimestamp = data.maxOfOrNull { it.endDate }
+        // Get max timestamp for anchor (use endTime, fallback to startTime)
+        val maxTimestamp = data.maxOfOrNull { it.endTime ?: it.startTime }
         
         // Send data
         val success = sendData(endpoint, token, payload)
@@ -461,36 +461,52 @@ class SyncManager(
             }
         }
 
-    // MARK: - Payload Building
+    // MARK: - Payload Building (Universal structure)
 
+    /**
+     * Build payload with UNIVERSAL structure for all data types.
+     * Every sample in each list has the SAME keys - backend can parse uniformly.
+     * 
+     * records[]: { uid, dataType, startTime, endTime, dataSource, device, values[] }
+     * workouts[]: { uid, dataType, exerciseType, startTime, endTime, dataSource, device, values[], sessions[] }
+     * sleep[]:    { uid, dataType, startTime, endTime, dataSource, device, values[], stages[] }
+     */
     private fun buildPayload(data: Map<String, List<HealthDataRecord>>): Map<String, Any> {
         val records = mutableListOf<Map<String, Any?>>()
         val workouts = mutableListOf<Map<String, Any?>>()
         val sleep = mutableListOf<Map<String, Any?>>()
 
-        for ((type, typeRecords) in data) {
+        for ((flutterTypeId, typeRecords) in data) {
             for (record in typeRecords) {
-                val recordMap = mapOf(
-                    "uuid" to record.uuid,
-                    "type" to record.type,
-                    "value" to record.value,
-                    "unit" to record.unit,
-                    "startDate" to dateFormat.format(Date(record.startDate)),
-                    "endDate" to dateFormat.format(Date(record.endDate)),
-                    "source" to mapOf(
-                        "name" to record.source.name,
-                        "bundleIdentifier" to record.source.bundleIdentifier,
-                        "deviceId" to record.source.deviceId
+                // Common base for all samples
+                val baseSample = mapOf(
+                    "uid" to record.uid,
+                    "dataType" to record.dataType,
+                    "startTime" to record.startTime,
+                    "endTime" to record.endTime,
+                    "dataSource" to mapOf(
+                        "appId" to record.dataSource.appId,
+                        "deviceId" to record.dataSource.deviceId
                     ),
-                    "recordMetadata" to record.metadata.map { 
-                        mapOf("key" to it.key, "value" to it.value) 
-                    }
+                    "device" to mapOf(
+                        "deviceId" to record.device.deviceId,
+                        "manufacturer" to record.device.manufacturer,
+                        "model" to record.device.model,
+                        "name" to record.device.name,
+                        "brand" to record.device.brand,
+                        "product" to record.device.product,
+                        "osType" to record.device.osType,
+                        "osVersion" to record.device.osVersion,
+                        "sdkVersion" to record.device.sdkVersion,
+                        "deviceType" to record.device.deviceType,
+                        "isSourceDevice" to record.device.isSourceDevice
+                    )
                 )
 
-                when (type) {
-                    "workout" -> workouts.add(recordMap)
-                    "sleep" -> sleep.add(recordMap)
-                    else -> records.add(recordMap)
+                when (flutterTypeId) {
+                    "workout" -> workouts.add(buildWorkoutSample(baseSample, record))
+                    "sleep" -> sleep.add(buildSleepSample(baseSample, record))
+                    else -> records.add(buildRecordSample(baseSample, record))
                 }
             }
         }
@@ -502,6 +518,97 @@ class SyncManager(
                 "sleep" to sleep
             )
         )
+    }
+    
+    /**
+     * Build UNIVERSAL record sample structure.
+     * All records have the same keys: values[] array with {type, value}
+     */
+    private fun buildRecordSample(base: Map<String, Any?>, record: HealthDataRecord): Map<String, Any?> {
+        val sample = base.toMutableMap()
+        
+        // Convert fields map to universal values array
+        sample["values"] = record.fields.map { (key, value) ->
+            mapOf("type" to key, "value" to value)
+        }
+        
+        return sample
+    }
+    
+    /**
+     * Build UNIVERSAL workout sample structure.
+     * All workouts have: exerciseType, values[], sessions[]
+     */
+    private fun buildWorkoutSample(base: Map<String, Any?>, record: HealthDataRecord): Map<String, Any?> {
+        val sample = base.toMutableMap()
+        
+        // Extract exerciseType to top level (always present for workouts)
+        sample["exerciseType"] = record.fields["EXERCISE_TYPE"] ?: "UNKNOWN"
+        
+        // Extract sessions separately
+        val sessions = record.fields["SESSIONS"] as? List<*> ?: emptyList<Any>()
+        sample["sessions"] = sessions.map { session ->
+            if (session is Map<*, *>) {
+                // Convert session fields to universal format
+                val sessionValues = session.entries
+                    .filter { it.key != null && it.value != null }
+                    .map { (key, value) ->
+                        mapOf("type" to key.toString(), "value" to value)
+                    }
+                mapOf("values" to sessionValues)
+            } else {
+                mapOf("values" to emptyList<Any>())
+            }
+        }
+        
+        // All other fields as values array (excluding SESSIONS and EXERCISE_TYPE)
+        sample["values"] = record.fields
+            .filter { it.key != "SESSIONS" && it.key != "EXERCISE_TYPE" }
+            .map { (key, value) ->
+                mapOf("type" to key, "value" to value)
+            }
+        
+        return sample
+    }
+    
+    /**
+     * Build UNIVERSAL sleep sample structure.
+     * All sleep records have: values[], stages[]
+     */
+    private fun buildSleepSample(base: Map<String, Any?>, record: HealthDataRecord): Map<String, Any?> {
+        val sample = base.toMutableMap()
+        
+        // Extract sessions/stages separately
+        val sessions = record.fields["SESSIONS"] as? List<*> ?: emptyList<Any>()
+        val stages = mutableListOf<Map<String, Any?>>()
+        
+        for (session in sessions) {
+            if (session is Map<*, *>) {
+                // Look for sleepStages in session
+                val sleepStages = session["sleepStages"] as? List<*>
+                if (sleepStages != null) {
+                    for (stage in sleepStages) {
+                        if (stage is Map<*, *>) {
+                            stages.add(mapOf(
+                                "stage" to (stage["stage"] ?: "UNKNOWN"),
+                                "startTime" to stage["startTime"],
+                                "endTime" to stage["endTime"]
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+        sample["stages"] = stages
+        
+        // All other fields as values array (excluding SESSIONS)
+        sample["values"] = record.fields
+            .filter { it.key != "SESSIONS" }
+            .map { (key, value) ->
+                mapOf("type" to key, "value" to value)
+            }
+        
+        return sample
     }
 
     private fun buildSyncEndpoint(baseUrl: String, customSyncUrl: String?, userId: String): String {
@@ -575,7 +682,14 @@ class SyncManager(
     private fun saveSyncState(state: SyncState) {
         try {
             val json = gson.toJson(state)
-            syncStateFile().writeText(json)
+            // Validate JSON before saving
+            if (json.isNotBlank() && json.startsWith("{")) {
+                val file = syncStateFile()
+                // Write to temp file first, then rename (atomic write)
+                val tempFile = File(file.parent, "${file.name}.tmp")
+                tempFile.writeText(json)
+                tempFile.renameTo(file)
+            }
         } catch (e: Exception) {
             logger("❌ Failed to save sync state: ${e.message}")
         }
@@ -587,18 +701,29 @@ class SyncManager(
             if (!file.exists()) return null
             
             val json = file.readText()
+            if (json.isBlank()) {
+                file.delete()
+                return null
+            }
+            
             val state = gson.fromJson(json, SyncState::class.java)
             
             // Verify state belongs to current user
-            if (state.userKey != userKey()) {
-                logger("⚠️ Sync state for different user, clearing")
+            if (state == null || state.userKey != userKey()) {
+                logger("⚠️ Sync state invalid or for different user, clearing")
                 clearSyncSession()
                 return null
             }
             
             state
         } catch (e: Exception) {
-            logger("❌ Failed to load sync state: ${e.message}")
+            // Clear corrupted state file
+            logger("⚠️ Corrupted sync state, clearing: ${e.message}")
+            try {
+                syncStateFile().delete()
+            } catch (deleteError: Exception) {
+                // Ignore delete errors
+            }
             null
         }
     }

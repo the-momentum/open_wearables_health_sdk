@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
@@ -163,7 +165,9 @@ class _HomePageState extends State<HomePage> {
         final baseUrl = customUrl.isNotEmpty ? customUrl : 'https://api.openwearables.io/api/v1/';
         // Remove trailing slash if present, then append path
         final normalizedBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
-        fullSyncUrl = '$normalizedBase/sdk/users/{user_id}/sync/apple';
+        // Use platform-specific endpoint: samsung for Android, apple for iOS
+        final provider = Platform.isAndroid ? 'samsung' : 'apple';
+        fullSyncUrl = '$normalizedBase/sdk/users/{user_id}/sync/$provider';
       }
       await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
       _checkStatus();
