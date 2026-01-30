@@ -172,6 +172,9 @@ extension OpenWearablesHealthSdkPlugin {
                 if (200...299).contains(httpResponse.statusCode) {
                     self.logMessage("✅ HTTP \(httpResponse.statusCode)")
                     
+                    // Record statistics for successfully uploaded data
+                    self.recordSuccessfulCombinedUpload(payload: payload)
+                    
                     self.handleSuccessfulUpload(itemPath: itemURL.path, anchorPath: anchorsURL?.path, wasFullExport: wasFullExport)
                     
                     try? FileManager.default.removeItem(atPath: payloadURL.path)

@@ -191,6 +191,9 @@ import Network
         case "clearSyncSession":
             self.clearSyncSession()
             result(nil)
+            
+        case "getSyncStatistics":
+            handleGetSyncStatistics(result: result)
 
         default:
             result(FlutterMethodNotImplemented)
@@ -338,6 +341,9 @@ import Network
         
         // Clear outbox
         clearOutbox()
+        
+        // Clear sync statistics
+        clearSyncStatistics()
         
         // Clear Keychain (this removes userId, accessToken, etc.)
         OpenWearablesHealthSdkKeychain.clearAll()

@@ -112,6 +112,17 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
   Future<void> clearSyncSession() {
     throw UnimplementedError('clearSyncSession() has not been implemented.');
   }
+
+  /// Returns cumulative sync statistics.
+  ///
+  /// Returns a map with:
+  /// - syncedCounts: Map<String, int> - formatted type names to synced counts
+  /// - rawSyncedCounts: Map<String, int> - raw type identifiers to synced counts
+  /// - totalSynced: int - total number of records synced across all types
+  /// - lastSyncTimestamp: String? - ISO8601 timestamp of last successful sync
+  Future<Map<String, dynamic>> getSyncStatistics() {
+    throw UnimplementedError('getSyncStatistics() has not been implemented.');
+  }
 }
 
 /// NO-OP placeholder.

@@ -327,6 +327,28 @@ class OpenWearablesHealthSdk {
     await _platform.clearSyncSession();
   }
 
+  // MARK: - Sync Statistics
+
+  /// Returns cumulative sync statistics.
+  ///
+  /// Use this to display how many records have been successfully synced
+  /// per data type. These statistics persist across app restarts.
+  ///
+  /// Returns a map with:
+  /// - `syncedCounts`: Map<String, int> - formatted type names to synced counts
+  /// - `rawSyncedCounts`: Map<String, int> - raw type identifiers to synced counts
+  /// - `totalSynced`: int - total number of records synced across all types
+  /// - `lastSyncTimestamp`: String? - ISO8601 timestamp of last successful sync
+  ///
+  /// ```dart
+  /// final stats = await OpenWearablesHealthSdk.getSyncStatistics();
+  /// final heartRateCount = (stats['syncedCounts'] as Map)['HeartRate'] ?? 0;
+  /// print('Synced $heartRateCount heart rate records');
+  /// ```
+  static Future<Map<String, dynamic>> getSyncStatistics() async {
+    return _platform.getSyncStatistics();
+  }
+
   // MARK: - Helpers
 
   static void _ensureSignedIn() {

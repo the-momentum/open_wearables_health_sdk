@@ -119,4 +119,13 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
   Future<void> clearSyncSession() async {
     await _channel.invokeMethod<void>('clearSyncSession');
   }
+
+  @override
+  Future<Map<String, dynamic>> getSyncStatistics() async {
+    final result = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'getSyncStatistics',
+    );
+    if (result == null) return {};
+    return result.map((key, value) => MapEntry(key as String, value));
+  }
 }
