@@ -327,27 +327,24 @@ class OpenWearablesHealthSdk {
     await _platform.clearSyncSession();
   }
 
-  // MARK: - Sync Statistics
+  // MARK: - Sync Statistics Stream
 
-  /// Returns cumulative sync statistics.
+  /// Stream of sync statistics events.
   ///
-  /// Use this to display how many records have been successfully synced
-  /// per data type. These statistics persist across app restarts.
-  ///
-  /// Returns a map with:
-  /// - `syncedCounts`: Map<String, int> - formatted type names to synced counts
-  /// - `rawSyncedCounts`: Map<String, int> - raw type identifiers to synced counts
-  /// - `totalSynced`: int - total number of records synced across all types
-  /// - `lastSyncTimestamp`: String? - ISO8601 timestamp of last successful sync
+  /// Emits events when data is successfully synced (HTTP 200).
+  /// Each event is a map with:
+  /// - `type`: String - formatted type name (e.g., "HeartRate")
+  /// - `rawType`: String - raw type identifier (e.g., "HKQuantityTypeIdentifierHeartRate")
+  /// - `count`: int - number of samples synced
+  /// - `timestamp`: String - ISO8601 timestamp
   ///
   /// ```dart
-  /// final stats = await OpenWearablesHealthSdk.getSyncStatistics();
-  /// final heartRateCount = (stats['syncedCounts'] as Map)['HeartRate'] ?? 0;
-  /// print('Synced $heartRateCount heart rate records');
+  /// OpenWearablesHealthSdk.syncStatsStream.listen((event) {
+  ///   print('Synced ${event['count']} ${event['type']} records');
+  /// });
   /// ```
-  static Future<Map<String, dynamic>> getSyncStatistics() async {
-    return _platform.getSyncStatistics();
-  }
+  static Stream<Map<String, dynamic>> get syncStatsStream =>
+      MethodChannelOpenWearablesHealthSdk.syncStatsStream;
 
   // MARK: - Helpers
 

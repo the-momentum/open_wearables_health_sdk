@@ -1,10 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 import 'package:open_wearables_health_sdk/health_data_type.dart';
+import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize sync statistics stream
+  initSyncStatisticsStream();
 
   runApp(const MyApp());
 }
@@ -17,6 +22,42 @@ const int _maxLogEntries = 500;
 final logUpdateNotifier = ValueNotifier<int>(0);
 DateTime _lastLogUpdate = DateTime.now();
 bool _pendingUpdate = false;
+
+// Global sync statistics state
+final Map<String, int> syncStatistics = <String, int>{};
+int totalSyncedCount = 0;
+DateTime? lastSyncTimestamp;
+final syncStatsNotifier = ValueNotifier<int>(0);
+StreamSubscription<Map<String, dynamic>>? _globalSyncStatsSubscription;
+
+// Initialize sync statistics stream subscription
+void initSyncStatisticsStream() {
+  _globalSyncStatsSubscription?.cancel();
+  _globalSyncStatsSubscription = OpenWearablesHealthSdk.syncStatsStream.listen((event) {
+    final type = event['type'] as String? ?? '';
+    final count = event['count'] as int? ?? 0;
+    final timestamp = event['timestamp'] as String?;
+
+    if (type.isNotEmpty && count > 0) {
+      syncStatistics[type] = (syncStatistics[type] ?? 0) + count;
+      totalSyncedCount += count;
+      if (timestamp != null) {
+        try {
+          lastSyncTimestamp = DateTime.parse(timestamp);
+        } catch (e) {
+          // Ignore parse errors
+        }
+      }
+      syncStatsNotifier.value++;
+    }
+  });
+}
+
+// Cleanup sync statistics stream subscription
+void disposeSyncStatisticsStream() {
+  _globalSyncStatsSubscription?.cancel();
+  _globalSyncStatsSubscription = null;
+}
 
 void _addLog(String message) {
   appLogs.add(message);
@@ -131,7 +172,10 @@ class _HomePageState extends State<HomePage> {
 
       if (hasUserId && hasAccessToken && wasSyncActive) {
         final storedCustomUrl = credentials['customSyncUrl'] as String?;
-        await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: storedCustomUrl);
+        await OpenWearablesHealthSdk.configure(
+          environment: OpenWearablesHealthSdkEnvironment.production,
+          customSyncUrl: storedCustomUrl,
+        );
         _checkStatus();
         _setStatus('Session restored');
       }
@@ -165,15 +209,15 @@ class _HomePageState extends State<HomePage> {
         final normalizedBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
         fullSyncUrl = '$normalizedBase/sdk/users/{user_id}/sync/apple';
       }
-      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
+      await OpenWearablesHealthSdk.configure(
+        environment: OpenWearablesHealthSdkEnvironment.production,
+        customSyncUrl: fullSyncUrl,
+      );
       _checkStatus();
 
       _setStatus('Signing in...');
       final authToken = token.startsWith('Bearer ') ? token : 'Bearer $token';
-      await OpenWearablesHealthSdk.signIn(
-        userId: userId,
-        accessToken: authToken,
-      );
+      await OpenWearablesHealthSdk.signIn(userId: userId, accessToken: authToken);
 
       _setStatus('Connected successfully');
       _checkStatus();
@@ -491,9 +535,7 @@ class _HomePageState extends State<HomePage> {
               iconColor: const Color(0xFF5856D6),
               title: 'Sync Status',
               subtitle: 'View sync progress per data type',
-              onTap: () => Navigator.of(context).push(
-                CupertinoPageRoute(builder: (c) => const SyncStatusPage()),
-              ),
+              onTap: () => Navigator.of(context).push(CupertinoPageRoute(builder: (c) => const SyncStatusPage())),
             ),
           ],
           _buildDivider(),
@@ -777,28 +819,26 @@ class SyncStatusPage extends StatefulWidget {
 }
 
 class _SyncStatusPageState extends State<SyncStatusPage> {
-  Map<String, dynamic> _statistics = {};
+  // Current session info
   Map<String, dynamic> _sessionStatus = {};
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadStatistics();
+    _loadSessionStatus();
   }
 
-  Future<void> _loadStatistics() async {
+  Future<void> _loadSessionStatus() async {
     setState(() => _isLoading = true);
     try {
-      final stats = await OpenWearablesHealthSdk.getSyncStatistics();
       final session = await OpenWearablesHealthSdk.getSyncStatus();
       setState(() {
-        _statistics = stats;
         _sessionStatus = session;
         _isLoading = false;
       });
     } catch (e) {
-      debugPrint('Failed to load statistics: $e');
+      debugPrint('Failed to load session status: $e');
       setState(() => _isLoading = false);
     }
   }
@@ -818,7 +858,7 @@ class _SyncStatusPageState extends State<SyncStatusPage> {
       final date = DateTime.parse(timestamp);
       final now = DateTime.now();
       final diff = now.difference(date);
-      
+
       if (diff.inMinutes < 1) return 'Just now';
       if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
       if (diff.inHours < 24) return '${diff.inHours}h ago';
@@ -835,13 +875,24 @@ class _SyncStatusPageState extends State<SyncStatusPage> {
     if (lower.contains('step')) return CupertinoIcons.flame_fill;
     if (lower.contains('workout')) return CupertinoIcons.sportscourt_fill;
     if (lower.contains('sleep')) return CupertinoIcons.moon_fill;
-    if (lower.contains('distance') || lower.contains('walking') || lower.contains('running')) return CupertinoIcons.arrow_right_circle_fill;
+    if (lower.contains('distance') || lower.contains('walking') || lower.contains('running'))
+      return CupertinoIcons.arrow_right_circle_fill;
     if (lower.contains('energy') || lower.contains('calorie')) return CupertinoIcons.bolt_fill;
     if (lower.contains('blood') || lower.contains('glucose')) return CupertinoIcons.drop_fill;
     if (lower.contains('oxygen') || lower.contains('respiratory')) return CupertinoIcons.wind;
-    if (lower.contains('body') || lower.contains('mass') || lower.contains('weight') || lower.contains('height') || lower.contains('bmi')) return CupertinoIcons.person_fill;
+    if (lower.contains('body') ||
+        lower.contains('mass') ||
+        lower.contains('weight') ||
+        lower.contains('height') ||
+        lower.contains('bmi'))
+      return CupertinoIcons.person_fill;
     if (lower.contains('mindful')) return CupertinoIcons.sparkles;
-    if (lower.contains('dietary') || lower.contains('water') || lower.contains('protein') || lower.contains('carb') || lower.contains('fat')) return CupertinoIcons.leaf_arrow_circlepath;
+    if (lower.contains('dietary') ||
+        lower.contains('water') ||
+        lower.contains('protein') ||
+        lower.contains('carb') ||
+        lower.contains('fat'))
+      return CupertinoIcons.leaf_arrow_circlepath;
     return CupertinoIcons.chart_bar_fill;
   }
 
@@ -851,30 +902,29 @@ class _SyncStatusPageState extends State<SyncStatusPage> {
     if (lower.contains('step') || lower.contains('flight')) return const Color(0xFFFF9500);
     if (lower.contains('workout')) return const Color(0xFF34C759);
     if (lower.contains('sleep')) return const Color(0xFF5856D6);
-    if (lower.contains('distance') || lower.contains('walking') || lower.contains('running')) return const Color(0xFF007AFF);
+    if (lower.contains('distance') || lower.contains('walking') || lower.contains('running'))
+      return const Color(0xFF007AFF);
     if (lower.contains('energy') || lower.contains('calorie')) return const Color(0xFFFFCC00);
     if (lower.contains('blood') || lower.contains('glucose')) return const Color(0xFFFF3B30);
     if (lower.contains('oxygen') || lower.contains('respiratory')) return const Color(0xFF64D2FF);
-    if (lower.contains('body') || lower.contains('mass') || lower.contains('weight') || lower.contains('height') || lower.contains('bmi')) return const Color(0xFFAF52DE);
+    if (lower.contains('body') ||
+        lower.contains('mass') ||
+        lower.contains('weight') ||
+        lower.contains('height') ||
+        lower.contains('bmi'))
+      return const Color(0xFFAF52DE);
     if (lower.contains('mindful')) return const Color(0xFF30D158);
-    if (lower.contains('dietary') || lower.contains('water') || lower.contains('protein') || lower.contains('carb') || lower.contains('fat')) return const Color(0xFF32ADE6);
+    if (lower.contains('dietary') ||
+        lower.contains('water') ||
+        lower.contains('protein') ||
+        lower.contains('carb') ||
+        lower.contains('fat'))
+      return const Color(0xFF32ADE6);
     return const Color(0xFF8E8E93);
   }
 
   @override
   Widget build(BuildContext context) {
-    final syncedCounts = (_statistics['syncedCounts'] as Map<Object?, Object?>?)?.cast<String, dynamic>() ?? {};
-    final totalSynced = _statistics['totalSynced'] as int? ?? 0;
-    final lastSyncTimestamp = _statistics['lastSyncTimestamp'] as String?;
-    
-    // Current session info
-    final hasResumable = _sessionStatus['hasResumableSession'] as bool? ?? false;
-    final sessionSentCount = _sessionStatus['sentCount'] as int? ?? 0;
-    
-    // Sort types by count (descending)
-    final sortedTypes = syncedCounts.entries.toList()
-      ..sort((a, b) => ((b.value as int?) ?? 0).compareTo((a.value as int?) ?? 0));
-
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
       appBar: AppBar(
@@ -892,262 +942,254 @@ class _SyncStatusPageState extends State<SyncStatusPage> {
           CupertinoButton(
             padding: const EdgeInsets.all(12),
             child: const Icon(CupertinoIcons.refresh, color: Color(0xFF007AFF)),
-            onPressed: _loadStatistics,
+            onPressed: _loadSessionStatus,
           ),
         ],
       ),
       body: _isLoading
           ? const Center(child: CupertinoActivityIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadStatistics,
-              child: CustomScrollView(
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Summary Card
-                          Container(
-                            padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [Color(0xFF5856D6), Color(0xFF007AFF)],
-                              ),
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFF5856D6).withValues(alpha: 0.3),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: const Icon(CupertinoIcons.chart_bar_fill, color: Colors.white, size: 24),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    const Expanded(
-                                      child: Text(
-                                        'Total Synced',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.white70,
-                                        ),
-                                      ),
+          : ValueListenableBuilder<int>(
+              valueListenable: syncStatsNotifier,
+              builder: (context, _, __) {
+                return RefreshIndicator(
+                  onRefresh: _loadSessionStatus,
+                  child: CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Summary Card
+                              Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [Color(0xFF5856D6), Color(0xFF007AFF)],
+                                  ),
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFF5856D6).withValues(alpha: 0.3),
+                                      blurRadius: 20,
+                                      offset: const Offset(0, 8),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  _formatNumber(totalSynced),
-                                  style: const TextStyle(
-                                    fontSize: 48,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                    letterSpacing: -1,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'records • Last sync: ${_formatTimestamp(lastSyncTimestamp)}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.white.withValues(alpha: 0.8),
-                                  ),
-                                ),
-                                if (hasResumable) ...[
-                                  const SizedBox(height: 12),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withValues(alpha: 0.2),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
                                       children: [
-                                        const Icon(CupertinoIcons.arrow_2_circlepath, color: Colors.white, size: 14),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          'Sync in progress: $sessionSentCount sent',
-                                          style: const TextStyle(fontSize: 13, color: Colors.white),
+                                        Container(
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: const Icon(
+                                            CupertinoIcons.chart_bar_fill,
+                                            color: Colors.white,
+                                            size: 24,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        const Expanded(
+                                          child: Text(
+                                            'Total Synced',
+                                            style: TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w500,
+                                              color: Colors.white70,
+                                            ),
+                                          ),
                                         ),
                                       ],
                                     ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          
-                          const SizedBox(height: 24),
-                          
-                          // Section header
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4, bottom: 8),
-                            child: Text(
-                              'BY DATA TYPE',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  
-                  // Data types list
-                  if (sortedTypes.isEmpty)
-                    SliverToBoxAdapter(
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16),
-                        padding: const EdgeInsets.all(32),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(CupertinoIcons.chart_bar, size: 48, color: Colors.grey[300]),
-                            const SizedBox(height: 12),
-                            Text(
-                              'No data synced yet',
-                              style: TextStyle(fontSize: 17, color: Colors.grey[400]),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Start syncing to see statistics here',
-                              style: TextStyle(fontSize: 14, color: Colors.grey[400]),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  else
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final entry = sortedTypes[index];
-                          final typeName = entry.key;
-                          final count = entry.value as int? ?? 0;
-                          final icon = _getIconForType(typeName);
-                          final color = _getColorForType(typeName);
-                          
-                          // Calculate percentage of total
-                          final percentage = totalSynced > 0 ? (count / totalSynced * 100) : 0.0;
-                          
-                          return Container(
-                            margin: EdgeInsets.only(
-                              left: 16,
-                              right: 16,
-                              bottom: index == sortedTypes.length - 1 ? 32 : 0,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.vertical(
-                                top: index == 0 ? const Radius.circular(16) : Radius.zero,
-                                bottom: index == sortedTypes.length - 1 ? const Radius.circular(16) : Radius.zero,
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                  child: Row(
-                                    children: [
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      _formatNumber(totalSyncedCount),
+                                      style: const TextStyle(
+                                        fontSize: 48,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                        letterSpacing: -1,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'records • Last sync: ${_formatTimestamp(lastSyncTimestamp?.toIso8601String())}',
+                                      style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.8)),
+                                    ),
+                                    if ((_sessionStatus['hasResumableSession'] as bool? ?? false)) ...[
+                                      const SizedBox(height: 12),
                                       Container(
-                                        width: 36,
-                                        height: 36,
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                         decoration: BoxDecoration(
-                                          color: color.withValues(alpha: 0.12),
+                                          color: Colors.white.withValues(alpha: 0.2),
                                           borderRadius: BorderRadius.circular(8),
                                         ),
-                                        child: Icon(icon, color: color, size: 18),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Text(
-                                              typeName,
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w500,
-                                                color: Colors.black87,
-                                              ),
+                                            const Icon(
+                                              CupertinoIcons.arrow_2_circlepath,
+                                              color: Colors.white,
+                                              size: 14,
                                             ),
-                                            const SizedBox(height: 4),
-                                            // Progress bar
-                                            ClipRRect(
-                                              borderRadius: BorderRadius.circular(2),
-                                              child: LinearProgressIndicator(
-                                                value: percentage / 100,
-                                                backgroundColor: Colors.grey[200],
-                                                valueColor: AlwaysStoppedAnimation<Color>(color),
-                                                minHeight: 4,
-                                              ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              'Sync in progress: ${_sessionStatus['sentCount'] ?? 0} sent',
+                                              style: const TextStyle(fontSize: 13, color: Colors.white),
                                             ),
                                           ],
                                         ),
                                       ),
-                                      const SizedBox(width: 12),
-                                      Column(
-                                        crossAxisAlignment: CrossAxisAlignment.end,
-                                        children: [
-                                          Text(
-                                            _formatNumber(count),
-                                            style: TextStyle(
-                                              fontSize: 17,
-                                              fontWeight: FontWeight.w600,
-                                              color: color,
-                                            ),
-                                          ),
-                                          Text(
-                                            '${percentage.toStringAsFixed(1)}%',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.grey[500],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
                                     ],
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 24),
+
+                              // Section header
+                              const Padding(
+                                padding: EdgeInsets.only(left: 4, bottom: 8),
+                                child: Text(
+                                  'BY DATA TYPE',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey,
+                                    letterSpacing: 0.5,
                                   ),
                                 ),
-                                if (index < sortedTypes.length - 1)
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 64),
-                                    child: Divider(height: 1, color: Colors.grey[200]),
-                                  ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // Data types list
+                      if (syncStatistics.isEmpty)
+                        SliverToBoxAdapter(
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 16),
+                            padding: const EdgeInsets.all(32),
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                            child: Column(
+                              children: [
+                                Icon(CupertinoIcons.chart_bar, size: 48, color: Colors.grey[300]),
+                                const SizedBox(height: 12),
+                                Text('No data synced yet', style: TextStyle(fontSize: 17, color: Colors.grey[400])),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Start syncing to see statistics here',
+                                  style: TextStyle(fontSize: 14, color: Colors.grey[400]),
+                                ),
                               ],
                             ),
-                          );
-                        },
-                        childCount: sortedTypes.length,
-                      ),
-                    ),
-                ],
-              ),
+                          ),
+                        )
+                      else
+                        Builder(
+                          builder: (context) {
+                            final sortedTypes = syncStatistics.entries.toList()
+                              ..sort((a, b) => b.value.compareTo(a.value));
+
+                            return SliverList(
+                              delegate: SliverChildBuilderDelegate((context, index) {
+                                final entry = sortedTypes[index];
+                                final typeName = entry.key;
+                                final count = entry.value;
+                                final icon = _getIconForType(typeName);
+                                final color = _getColorForType(typeName);
+
+                                // Calculate percentage of total
+                                final percentage = totalSyncedCount > 0 ? (count / totalSyncedCount * 100) : 0.0;
+
+                                return Container(
+                                  margin: EdgeInsets.only(
+                                    left: 16,
+                                    right: 16,
+                                    bottom: index == sortedTypes.length - 1 ? 32 : 0,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.vertical(
+                                      top: index == 0 ? const Radius.circular(16) : Radius.zero,
+                                      bottom: index == sortedTypes.length - 1 ? const Radius.circular(16) : Radius.zero,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 36,
+                                              height: 36,
+                                              decoration: BoxDecoration(
+                                                color: color.withValues(alpha: 0.12),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: Icon(icon, color: color, size: 18),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    typeName,
+                                                    style: const TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight: FontWeight.w500,
+                                                      color: Colors.black87,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  // Progress bar
+                                                  ClipRRect(
+                                                    borderRadius: BorderRadius.circular(2),
+                                                    child: LinearProgressIndicator(
+                                                      value: percentage / 100,
+                                                      backgroundColor: Colors.grey[200],
+                                                      valueColor: AlwaysStoppedAnimation<Color>(color),
+                                                      minHeight: 4,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(
+                                              _formatNumber(count),
+                                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: color),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (index < sortedTypes.length - 1)
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 64),
+                                          child: Divider(height: 1, color: Colors.grey[200]),
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              }, childCount: sortedTypes.length),
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                );
+              },
             ),
     );
   }

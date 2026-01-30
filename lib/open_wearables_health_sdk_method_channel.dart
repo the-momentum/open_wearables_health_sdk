@@ -7,11 +7,23 @@ import 'src/exceptions.dart';
 class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform {
   static const MethodChannel _channel = MethodChannel('open_wearables_health_sdk');
   static const EventChannel _logChannel = EventChannel('open_wearables_health_sdk/logs');
+  static const EventChannel _syncStatsChannel = EventChannel('open_wearables_health_sdk/sync_stats');
 
   /// Stream of log messages from the native SDK.
   /// Subscribe to this to receive real-time logs about sync operations.
   static Stream<String> get logStream =>
       _logChannel.receiveBroadcastStream().map((event) => event.toString());
+  
+  /// Stream of sync statistics events.
+  /// Emits events when data is successfully synced (HTTP 200).
+  /// Each event contains: type (formatted name), rawType (identifier), count (number of samples), timestamp.
+  static Stream<Map<String, dynamic>> get syncStatsStream =>
+      _syncStatsChannel.receiveBroadcastStream().map((event) {
+        if (event is Map) {
+          return Map<String, dynamic>.from(event);
+        }
+        return <String, dynamic>{};
+      });
 
   @override
   Future<bool> configure({
@@ -118,14 +130,5 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
   @override
   Future<void> clearSyncSession() async {
     await _channel.invokeMethod<void>('clearSyncSession');
-  }
-
-  @override
-  Future<Map<String, dynamic>> getSyncStatistics() async {
-    final result = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'getSyncStatistics',
-    );
-    if (result == null) return {};
-    return result.map((key, value) => MapEntry(key as String, value));
   }
 }
