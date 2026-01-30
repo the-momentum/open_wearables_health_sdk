@@ -2,6 +2,35 @@ import Foundation
 import HealthKit
 
 extension OpenWearablesHealthSdkPlugin {
+    
+    // MARK: - Emit Sync Statistics from Payload
+    internal func emitSyncStatsFromPayload(payload: [String: Any]) {
+        // Safely extract and emit statistics without blocking sync
+        guard let data = payload["data"] as? [String: Any] else {
+            // No data section - this is OK, just return silently
+            return
+        }
+        
+        // Count records per type
+        if let records = data["records"] as? [[String: Any]], !records.isEmpty {
+            var typeCounts: [String: Int] = [:]
+            for record in records {
+                if let type = record["type"] as? String, !type.isEmpty {
+                    typeCounts[type, default: 0] += 1
+                }
+            }
+            
+            // Emit event for each type
+            for (type, count) in typeCounts where count > 0 {
+                emitSyncStatsEvent(typeIdentifier: type, count: count)
+            }
+        }
+        
+        // Count workouts
+        if let workouts = data["workouts"] as? [[String: Any]], !workouts.isEmpty {
+            emitSyncStatsEvent(typeIdentifier: "HKWorkoutType", count: workouts.count)
+        }
+    }
 
     // MARK: - Outbox model
     internal struct OutboxItem: Codable {
@@ -171,6 +200,15 @@ extension OpenWearablesHealthSdkPlugin {
             if let httpResponse = response as? HTTPURLResponse {
                 if (200...299).contains(httpResponse.statusCode) {
                     self.logMessage("✅ HTTP \(httpResponse.statusCode)")
+                    
+                    // Emit sync statistics events for successfully uploaded data
+                    // Wrap in async to prevent blocking the upload completion
+                    // Only emit if there's a listener (syncStatsEventSink is set)
+                    if self.syncStatsEventSink != nil {
+                        DispatchQueue.global(qos: .utility).async { [weak self] in
+                            self?.emitSyncStatsFromPayload(payload: payload)
+                        }
+                    }
                     
                     self.handleSuccessfulUpload(itemPath: itemURL.path, anchorPath: anchorsURL?.path, wasFullExport: wasFullExport)
                     

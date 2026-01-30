@@ -56,6 +56,10 @@ import Network
     // Log event sink
     private var logEventSink: FlutterEventSink?
     private var logEventChannel: FlutterEventChannel?
+    
+    // Sync statistics event sink
+    internal var syncStatsEventSink: FlutterEventSink?
+    private var syncStatsEventChannel: FlutterEventChannel?
 
     // Background response data buffer
     internal var backgroundDataBuffer: [Int: Data] = [:]
@@ -90,6 +94,10 @@ import Network
         let logChannel = FlutterEventChannel(name: "open_wearables_health_sdk/logs", binaryMessenger: registrar.messenger())
         instance.logEventChannel = logChannel
         logChannel.setStreamHandler(instance)
+        
+        let syncStatsChannel = FlutterEventChannel(name: "open_wearables_health_sdk/sync_stats", binaryMessenger: registrar.messenger())
+        instance.syncStatsEventChannel = syncStatsChannel
+        syncStatsChannel.setStreamHandler(SyncStatsStreamHandler(plugin: instance))
     }
     
     @objc public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
@@ -1125,7 +1133,7 @@ import Network
         }
     }
     
-    // MARK: - FlutterStreamHandler
+    // MARK: - FlutterStreamHandler (for logs)
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         logEventSink = events
         return nil
@@ -1136,12 +1144,48 @@ import Network
         return nil
     }
     
+    // MARK: - Emit Sync Statistics Event
+    internal func emitSyncStatsEvent(typeIdentifier: String, count: Int) {
+        guard let sink = syncStatsEventSink else { return }
+        
+        let formattedType = shortTypeName(typeIdentifier)
+        let event: [String: Any] = [
+            "type": formattedType,
+            "rawType": typeIdentifier,
+            "count": count,
+            "timestamp": ISO8601DateFormatter().string(from: Date())
+        ]
+        
+        DispatchQueue.main.async { [weak self] in
+            sink(event)
+        }
+    }
+    
     // MARK: - Helpers
     internal func shortTypeName(_ identifier: String) -> String {
         return identifier
             .replacingOccurrences(of: "HKQuantityTypeIdentifier", with: "")
             .replacingOccurrences(of: "HKCategoryTypeIdentifier", with: "")
             .replacingOccurrences(of: "HKWorkoutType", with: "Workout")
+    }
+}
+
+// MARK: - Sync Statistics Stream Handler
+class SyncStatsStreamHandler: NSObject, FlutterStreamHandler {
+    weak var plugin: OpenWearablesHealthSdkPlugin?
+    
+    init(plugin: OpenWearablesHealthSdkPlugin) {
+        self.plugin = plugin
+    }
+    
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        plugin?.syncStatsEventSink = events
+        return nil
+    }
+    
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        plugin?.syncStatsEventSink = nil
+        return nil
     }
 }
 

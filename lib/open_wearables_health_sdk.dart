@@ -327,6 +327,25 @@ class OpenWearablesHealthSdk {
     await _platform.clearSyncSession();
   }
 
+  // MARK: - Sync Statistics Stream
+
+  /// Stream of sync statistics events.
+  ///
+  /// Emits events when data is successfully synced (HTTP 200).
+  /// Each event is a map with:
+  /// - `type`: String - formatted type name (e.g., "HeartRate")
+  /// - `rawType`: String - raw type identifier (e.g., "HKQuantityTypeIdentifierHeartRate")
+  /// - `count`: int - number of samples synced
+  /// - `timestamp`: String - ISO8601 timestamp
+  ///
+  /// ```dart
+  /// OpenWearablesHealthSdk.syncStatsStream.listen((event) {
+  ///   print('Synced ${event['count']} ${event['type']} records');
+  /// });
+  /// ```
+  static Stream<Map<String, dynamic>> get syncStatsStream =>
+      MethodChannelOpenWearablesHealthSdk.syncStatsStream;
+
   // MARK: - Helpers
 
   static void _ensureSignedIn() {
