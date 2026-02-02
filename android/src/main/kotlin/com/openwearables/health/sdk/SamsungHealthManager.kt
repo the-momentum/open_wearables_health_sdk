@@ -327,10 +327,11 @@ class SamsungHealthManager(
             }
             
             // setLocalTimeFilter if timestamp provided
+            // Add 1ms to anchor to exclude already synced data (since() is inclusive >=)
             if (sinceTimestamp != null) {
                 try {
                     val startTime = LocalDateTime.ofInstant(
-                        Instant.ofEpochMilli(sinceTimestamp),
+                        Instant.ofEpochMilli(sinceTimestamp + 1),
                         ZoneId.systemDefault()
                     )
                     val filter = LocalTimeFilter.since(startTime)
