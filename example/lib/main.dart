@@ -127,6 +127,9 @@ class _HomePageState extends State<HomePage> {
         if (credentials['accessToken'] != null) {
           _tokenController.text = credentials['accessToken'] as String;
         }
+        if (credentials['customSyncUrl'] != null) {
+          _customUrlController.text = credentials['customSyncUrl'] as String;
+        }
       });
 
       if (hasUserId && hasAccessToken && wasSyncActive) {
