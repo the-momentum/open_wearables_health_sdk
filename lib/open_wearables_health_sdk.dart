@@ -128,50 +128,68 @@ class OpenWearablesHealthSdk {
 
   // MARK: - Authentication
 
-  /// Signs in a user with userId and accessToken.
+  /// Signs in a user with the given credentials.
   ///
-  /// The accessToken must be obtained from your backend server, which
-  /// generates it via communication with the Open Wearables API.
+  /// Two authentication modes are supported:
   ///
-  /// ## Token Expiration
+  /// ## Mode 1: Token-based (accessToken + refreshToken)
   ///
-  /// If the token expires (server returns 401), the SDK will emit an event
-  /// on `MethodChannelOpenWearablesHealthSdk.authErrorStream`. Your app should
-  /// listen to this stream and handle re-authentication.
+  /// The [accessToken] and [refreshToken] must be obtained from your backend
+  /// server, which generates them via the Open Wearables API.
   ///
-  /// ## Optional Parameters
-  ///
-  /// Pass [appId], [appSecret], and [baseUrl] for local testing or custom
-  /// backend configurations.
-  ///
-  /// ## Flow
-  ///
-  /// 1. Your mobile app requests credentials from YOUR backend
-  /// 2. Your backend calls Open Wearables API to generate accessToken
-  /// 3. Your backend returns userId and accessToken to mobile app
-  /// 4. Mobile app calls this method with the credentials
+  /// When the server returns 401, the SDK will automatically refresh the
+  /// access token using the refresh token. If refresh fails, the SDK emits
+  /// an event on `MethodChannelOpenWearablesHealthSdk.authErrorStream`.
   ///
   /// ```dart
   /// final user = await OpenWearablesHealthSdk.signIn(
   ///   userId: response['userId'],
   ///   accessToken: response['accessToken'],
+  ///   refreshToken: response['refreshToken'],
   /// );
   /// ```
   ///
+  /// ## Mode 2: App credentials (appId + appSecret)
+  ///
+  /// Pass [appId], [appSecret], and [baseUrl] for local testing or custom
+  /// backend configurations.
+  ///
+  /// ```dart
+  /// final user = await OpenWearablesHealthSdk.signIn(
+  ///   userId: 'test-user',
+  ///   appId: 'your-app-id',
+  ///   appSecret: 'your-app-secret',
+  ///   baseUrl: 'http://localhost:3000',
+  /// );
+  /// ```
+  ///
+  /// You must provide either (accessToken + refreshToken) or
+  /// (appId + appSecret). Passing both is also allowed.
+  ///
   /// Throws [NotConfiguredException] if [configure] was not called.
   /// Throws [SignInException] if sign-in fails.
+  /// Throws [ArgumentError] if neither credential set is provided.
   static Future<OpenWearablesHealthSdkUser> signIn({
     required String userId,
-    required String accessToken,
+    String? accessToken,
+    String? refreshToken,
     String? appId,
     String? appSecret,
     String? baseUrl,
   }) async {
     if (_config == null) throw const NotConfiguredException();
 
+    final hasTokens = accessToken != null && refreshToken != null;
+    final hasAppCredentials = appId != null && appSecret != null;
+
+    if (!hasTokens && !hasAppCredentials) {
+      throw ArgumentError('You must provide either (accessToken + refreshToken) or (appId + appSecret).');
+    }
+
     await _platform.signIn(
       userId: userId,
       accessToken: accessToken,
+      refreshToken: refreshToken,
       appId: appId,
       appSecret: appSecret,
       baseUrl: baseUrl,

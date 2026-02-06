@@ -37,7 +37,8 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
   @override
   Future<void> signIn({
     required String userId,
-    required String accessToken,
+    String? accessToken,
+    String? refreshToken,
     String? appId,
     String? appSecret,
     String? baseUrl,
@@ -45,7 +46,8 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
     try {
       await _channel.invokeMethod<void>('signIn', {
         'userId': userId,
-        'accessToken': accessToken,
+        if (accessToken != null) 'accessToken': accessToken,
+        if (refreshToken != null) 'refreshToken': refreshToken,
         if (appId != null) 'appId': appId,
         if (appSecret != null) 'appSecret': appSecret,
         if (baseUrl != null) 'baseUrl': baseUrl,

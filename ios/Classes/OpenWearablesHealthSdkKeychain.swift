@@ -9,6 +9,7 @@ internal class OpenWearablesHealthSdkKeychain {
     
     // MARK: - Keys
     private static let accessTokenKey = "accessToken"
+    private static let refreshTokenKey = "refreshToken"
     private static let userIdKey = "userId"
     private static let appIdKey = "appId"
     private static let appSecretKey = "appSecret"
@@ -42,9 +43,14 @@ internal class OpenWearablesHealthSdkKeychain {
     
     // MARK: - Save Credentials
     
-    static func saveCredentials(userId: String, accessToken: String) {
+    static func saveCredentials(userId: String, accessToken: String? = nil, refreshToken: String? = nil) {
         save(key: userIdKey, value: userId)
-        save(key: accessTokenKey, value: accessToken)
+        if let accessToken = accessToken {
+            save(key: accessTokenKey, value: accessToken)
+        }
+        if let refreshToken = refreshToken {
+            save(key: refreshTokenKey, value: refreshToken)
+        }
     }
     
     // MARK: - Load Credentials
@@ -53,8 +59,21 @@ internal class OpenWearablesHealthSdkKeychain {
         return load(key: accessTokenKey)
     }
     
+    static func getRefreshToken() -> String? {
+        return load(key: refreshTokenKey)
+    }
+    
     static func getUserId() -> String? {
         return load(key: userIdKey)
+    }
+    
+    // MARK: - Update Tokens (after refresh)
+    
+    static func updateTokens(accessToken: String, refreshToken: String?) {
+        save(key: accessTokenKey, value: accessToken)
+        if let refreshToken = refreshToken {
+            save(key: refreshTokenKey, value: refreshToken)
+        }
     }
     
     static func hasSession() -> Bool {
@@ -123,6 +142,7 @@ internal class OpenWearablesHealthSdkKeychain {
     
     static func clearAll() {
         delete(key: accessTokenKey)
+        delete(key: refreshTokenKey)
         delete(key: userIdKey)
         delete(key: appIdKey)
         delete(key: appSecretKey)

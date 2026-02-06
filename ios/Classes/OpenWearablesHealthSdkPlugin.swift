@@ -13,6 +13,12 @@ import Network
     // MARK: - User State (loaded from Keychain)
     internal var userId: String? { OpenWearablesHealthSdkKeychain.getUserId() }
     internal var accessToken: String? { OpenWearablesHealthSdkKeychain.getAccessToken() }
+    internal var refreshToken: String? { OpenWearablesHealthSdkKeychain.getRefreshToken() }
+    
+    // Token refresh state (to avoid concurrent refreshes)
+    private var isRefreshingToken = false
+    private let tokenRefreshLock = NSLock()
+    private var tokenRefreshCallbacks: [(Bool) -> Void] = []
     
     // MARK: - HealthKit State
     internal let healthStore = HKHealthStore()
@@ -31,6 +37,7 @@ import Network
     // Sync flags
     internal var isInitialSyncInProgress = false
     private var isSyncing: Bool = false
+    private var syncCancelled: Bool = false
     private let syncLock = NSLock()
     
     // Network monitoring
@@ -156,6 +163,7 @@ import Network
             let credentials: [String: Any?] = [
                 "userId": OpenWearablesHealthSdkKeychain.getUserId(),
                 "accessToken": OpenWearablesHealthSdkKeychain.getAccessToken(),
+                "refreshToken": OpenWearablesHealthSdkKeychain.getRefreshToken(),
                 "customSyncUrl": OpenWearablesHealthSdkKeychain.getCustomSyncUrl(),
                 "isSyncActive": OpenWearablesHealthSdkKeychain.isSyncActive()
             ]
@@ -171,6 +179,7 @@ import Network
             handleStartBackgroundSync(result: result)
 
         case "stopBackgroundSync":
+            self.cancelSync()
             self.stopBackgroundDelivery()
             self.stopNetworkMonitoring()
             self.cancelAllBGTasks()
@@ -291,22 +300,33 @@ import Network
         logMessage("✅ Background sync auto-restored")
     }
     
-    // MARK: - Sign In (with userId and accessToken)
+    // MARK: - Sign In (with tokens or app credentials)
     private func handleSignIn(call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
-              let userId = args["userId"] as? String,
-              let accessToken = args["accessToken"] as? String else {
-            result(FlutterError(code: "bad_args", message: "Missing userId or accessToken", details: nil))
+              let userId = args["userId"] as? String else {
+            result(FlutterError(code: "bad_args", message: "Missing userId", details: nil))
             return
         }
         
-        // Save to Keychain
-        OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: accessToken)
+        let accessToken = args["accessToken"] as? String
+        let refreshToken = args["refreshToken"] as? String
+        let appId = args["appId"] as? String
+        let appSecret = args["appSecret"] as? String
+        let baseUrl = args["baseUrl"] as? String
         
-        // Save app credentials if provided (for local testing / custom configurations)
-        if let appId = args["appId"] as? String,
-           let appSecret = args["appSecret"] as? String,
-           let baseUrl = args["baseUrl"] as? String {
+        let hasTokens = accessToken != nil && refreshToken != nil
+        let hasAppCredentials = appId != nil && appSecret != nil
+        
+        guard hasTokens || hasAppCredentials else {
+            result(FlutterError(code: "bad_args", message: "Provide (accessToken + refreshToken) or (appId + appSecret)", details: nil))
+            return
+        }
+        
+        // Save user ID always
+        OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: accessToken, refreshToken: refreshToken)
+        
+        // Save app credentials if provided
+        if let appId = appId, let appSecret = appSecret, let baseUrl = baseUrl {
             OpenWearablesHealthSdkKeychain.saveAppCredentials(appId: appId, appSecret: appSecret, baseUrl: baseUrl)
             logMessage("✅ App credentials saved")
         }
@@ -322,6 +342,9 @@ import Network
     // MARK: - Sign Out
     private func handleSignOut(result: @escaping FlutterResult) {
         logMessage("🔓 Signing out")
+        
+        // Cancel any in-progress sync first
+        cancelSync()
         
         stopBackgroundDelivery()
         stopNetworkMonitoring()
@@ -568,6 +591,16 @@ import Network
         isBackground: Bool,
         completion: @escaping ()->Void
     ) {
+        // Check cancellation
+        syncLock.lock()
+        let cancelled = syncCancelled
+        syncLock.unlock()
+        if cancelled {
+            logMessage("🛑 Sync cancelled - stopping type processing")
+            completion()
+            return
+        }
+        
         guard typeIndex < types.count else {
             // All types processed
             completion()
@@ -647,6 +680,15 @@ import Network
             // Use autoreleasepool to free memory after processing
             autoreleasepool {
                 guard let self = self else {
+                    completion(false)
+                    return
+                }
+                
+                // Check cancellation
+                self.syncLock.lock()
+                let cancelled = self.syncCancelled
+                self.syncLock.unlock()
+                if cancelled {
                     completion(false)
                     return
                 }
@@ -737,6 +779,15 @@ import Network
             
             autoreleasepool {
                 guard let self = self else {
+                    completion(false)
+                    return
+                }
+                
+                // Check cancellation
+                self.syncLock.lock()
+                let cancelled = self.syncCancelled
+                self.syncLock.unlock()
+                if cancelled {
                     completion(false)
                     return
                 }
@@ -849,6 +900,50 @@ import Network
         syncLock.unlock()
     }
     
+    /// Cancels any in-progress sync and all pending/in-flight network tasks
+    internal func cancelSync() {
+        logMessage("🛑 Cancelling sync...")
+        
+        // Set cancellation flag - checked by processTypesSequentially / processTypeStreaming
+        syncLock.lock()
+        syncCancelled = true
+        syncLock.unlock()
+        
+        // Cancel debounced sync
+        pendingSyncWorkItem?.cancel()
+        pendingSyncWorkItem = nil
+        
+        // Cancel all in-flight foreground session tasks
+        foregroundSession.getAllTasks { tasks in
+            for task in tasks {
+                task.cancel()
+            }
+        }
+        
+        // Cancel all in-flight background session tasks
+        session.getAllTasks { tasks in
+            for task in tasks {
+                task.cancel()
+            }
+        }
+        
+        // End background task if active
+        if observerBgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(observerBgTask)
+            observerBgTask = .invalid
+        }
+        
+        // Reset sync state
+        finishSync()
+        
+        // Reset cancellation flag so future syncs can proceed
+        syncLock.lock()
+        syncCancelled = false
+        syncLock.unlock()
+        
+        logMessage("🛑 Sync cancelled")
+    }
+    
     internal func syncType(_ type: HKSampleType, fullExport: Bool, completion: @escaping ()->Void) {
         let anchor = fullExport ? nil : loadAnchor(for: type)
         
@@ -885,6 +980,104 @@ import Network
             DispatchQueue.main.async { [weak self] in
                 sink(message)
             }
+        }
+    }
+    
+    // MARK: - Token Refresh
+    
+    /// Attempts to refresh the access token using the refresh token.
+    /// Calls `POST {baseUrl}/api/v1/token/refresh` with the current refresh token.
+    /// On success, saves the new tokens and calls completion with `true`.
+    /// On failure (or if no refresh token is available), calls completion with `false`.
+    internal func attemptTokenRefresh(completion: @escaping (Bool) -> Void) {
+        tokenRefreshLock.lock()
+        
+        // If already refreshing, queue the callback
+        if isRefreshingToken {
+            tokenRefreshCallbacks.append(completion)
+            tokenRefreshLock.unlock()
+            return
+        }
+        
+        guard let refreshToken = self.refreshToken, let baseUrl = self.baseUrl else {
+            tokenRefreshLock.unlock()
+            logMessage("🔒 No refresh token or baseUrl - cannot refresh")
+            completion(false)
+            return
+        }
+        
+        isRefreshingToken = true
+        tokenRefreshCallbacks.append(completion)
+        tokenRefreshLock.unlock()
+        
+        guard let url = URL(string: "\(baseUrl)/api/v1/token/refresh") else {
+            logMessage("❌ Invalid refresh URL")
+            finishTokenRefresh(success: false)
+            return
+        }
+        
+        logMessage("🔄 Attempting token refresh...")
+        
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: String] = ["refresh_token": refreshToken]
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
+            logMessage("❌ Failed to serialize refresh request body")
+            finishTokenRefresh(success: false)
+            return
+        }
+        req.httpBody = bodyData
+        
+        let task = foregroundSession.dataTask(with: req) { [weak self] data, response, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                self.logMessage("❌ Token refresh failed: \(error.localizedDescription)")
+                self.finishTokenRefresh(success: false)
+                return
+            }
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode),
+                  let data = data else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                self.logMessage("❌ Token refresh failed: HTTP \(statusCode)")
+                self.finishTokenRefresh(success: false)
+                return
+            }
+            
+            // Parse response: { "access_token": "...", "token_type": "bearer", "refresh_token": "...", "expires_in": 0 }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let newAccessToken = json["access_token"] as? String else {
+                self.logMessage("❌ Token refresh: invalid response body")
+                self.finishTokenRefresh(success: false)
+                return
+            }
+            
+            let newRefreshToken = json["refresh_token"] as? String
+            
+            // Save new tokens to Keychain
+            OpenWearablesHealthSdkKeychain.updateTokens(accessToken: newAccessToken, refreshToken: newRefreshToken)
+            
+            self.logMessage("✅ Token refreshed successfully")
+            self.finishTokenRefresh(success: true)
+        }
+        
+        task.resume()
+    }
+    
+    /// Resolves all pending token refresh callbacks
+    private func finishTokenRefresh(success: Bool) {
+        tokenRefreshLock.lock()
+        let callbacks = tokenRefreshCallbacks
+        tokenRefreshCallbacks = []
+        isRefreshingToken = false
+        tokenRefreshLock.unlock()
+        
+        for callback in callbacks {
+            callback(success)
         }
     }
     

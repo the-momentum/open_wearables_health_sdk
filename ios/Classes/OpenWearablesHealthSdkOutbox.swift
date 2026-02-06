@@ -177,10 +177,51 @@ extension OpenWearablesHealthSdkPlugin {
                     try? FileManager.default.removeItem(atPath: payloadURL.path)
                     completion(true)
                 } else if httpResponse.statusCode == 401 {
-                    // Unauthorized - emit auth error to Flutter
-                    self.emitAuthError(statusCode: 401)
-                    try? FileManager.default.removeItem(atPath: payloadURL.path)
-                    completion(false)
+                    // Unauthorized - try to refresh the token
+                    self.attemptTokenRefresh { [weak self] refreshSuccess in
+                        guard let self = self else { return }
+                        
+                        if refreshSuccess, let newToken = self.accessToken {
+                            self.logMessage("🔄 Retrying upload with refreshed token...")
+                            // Retry the upload with the new token
+                            var retryReq = URLRequest(url: endpoint)
+                            retryReq.httpMethod = "POST"
+                            retryReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                            retryReq.setValue(newToken, forHTTPHeaderField: "Authorization")
+                            retryReq.httpBody = payloadData
+                            retryReq.setValue("\(payloadData.count)", forHTTPHeaderField: "Content-Length")
+                            
+                            let retryTask = self.foregroundSession.dataTask(with: retryReq) { [weak self] retryData, retryResponse, retryError in
+                                guard let self = self else { return }
+                                
+                                if let retryError = retryError {
+                                    self.logMessage("❌ Retry upload error: \(retryError.localizedDescription)")
+                                    try? FileManager.default.removeItem(atPath: payloadURL.path)
+                                    completion(false)
+                                    return
+                                }
+                                
+                                if let retryHttp = retryResponse as? HTTPURLResponse, (200...299).contains(retryHttp.statusCode) {
+                                    self.logMessage("✅ Retry HTTP \(retryHttp.statusCode)")
+                                    self.handleSuccessfulUpload(itemPath: itemURL.path, anchorPath: anchorsURL?.path, wasFullExport: wasFullExport)
+                                    try? FileManager.default.removeItem(atPath: payloadURL.path)
+                                    completion(true)
+                                } else {
+                                    let retryStatus = (retryResponse as? HTTPURLResponse)?.statusCode ?? 0
+                                    self.logMessage("❌ Retry failed: HTTP \(retryStatus)")
+                                    self.emitAuthError(statusCode: 401)
+                                    try? FileManager.default.removeItem(atPath: payloadURL.path)
+                                    completion(false)
+                                }
+                            }
+                            retryTask.resume()
+                        } else {
+                            // Refresh failed - emit auth error
+                            self.emitAuthError(statusCode: 401)
+                            try? FileManager.default.removeItem(atPath: payloadURL.path)
+                            completion(false)
+                        }
+                    }
                 } else {
                     // Log error response body for debugging
                     var errorMsg = "❌ HTTP \(httpResponse.statusCode)"

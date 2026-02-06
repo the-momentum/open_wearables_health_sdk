@@ -1,7 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 import 'package:open_wearables_health_sdk/health_data_type.dart';
+import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

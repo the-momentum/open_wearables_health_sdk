@@ -52,10 +52,18 @@ extension OpenWearablesHealthSdkPlugin {
         
         // Only treat 2xx as success (HEAD/redirects can happen in background)
         if let http = task.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            // Emit auth error for 401 responses
             if http.statusCode == 401 {
-                DispatchQueue.main.async { [weak self] in
-                    self?.emitAuthError(statusCode: 401)
+                // Try to refresh the token before emitting auth error
+                self.attemptTokenRefresh { [weak self] refreshSuccess in
+                    guard let self = self else { return }
+                    if refreshSuccess {
+                        self.logMessage("🔄 Token refreshed after background 401 - retrying outbox...")
+                        self.retryOutboxIfPossible()
+                    } else {
+                        DispatchQueue.main.async { [weak self] in
+                            self?.emitAuthError(statusCode: 401)
+                        }
+                    }
                 }
             }
             print("⛔️ upload HTTP \(http.statusCode) — keep item for retry")

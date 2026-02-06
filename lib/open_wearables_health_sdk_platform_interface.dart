@@ -25,19 +25,23 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   // MARK: - Authentication
 
-  /// Signs in a user with userId and accessToken.
+  /// Signs in a user with the given credentials.
   ///
-  /// The accessToken is obtained from the developer's backend which generates it
-  /// via communication with the Open Wearables API.
+  /// Two authentication modes are supported:
   ///
-  /// Optionally pass [appId], [appSecret], and [baseUrl] for local testing
-  /// or custom backend configurations.
+  /// **Mode 1: Token-based** — pass [accessToken] and [refreshToken].
+  /// The SDK will use these tokens directly for API calls and will
+  /// automatically refresh the access token on 401 errors.
   ///
-  /// If the token expires (401 error), listen to `authErrorStream` to handle
-  /// re-authentication in your app.
+  /// **Mode 2: App credentials** — pass [appId], [appSecret], and [baseUrl].
+  /// Used for local testing or custom backend configurations.
+  ///
+  /// You must provide either (accessToken + refreshToken) or
+  /// (appId + appSecret). Passing both is also allowed.
   Future<void> signIn({
     required String userId,
-    required String accessToken,
+    String? accessToken,
+    String? refreshToken,
     String? appId,
     String? appSecret,
     String? baseUrl,
