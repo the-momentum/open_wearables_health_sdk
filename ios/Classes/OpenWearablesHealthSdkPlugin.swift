@@ -8,7 +8,6 @@ import Network
 
     // MARK: - Configuration State
     internal var baseUrl: String?
-    internal var customSyncUrl: String?
     
     // MARK: - User State (loaded from Keychain)
     internal var userId: String? { OpenWearablesHealthSdkKeychain.getUserId() }
@@ -81,6 +80,10 @@ import Network
     private var networkMonitor: NWPathMonitor?
     private let networkMonitorQueue = DispatchQueue(label: "health_sync_network_monitor")
     private var wasDisconnected = false
+    
+    // Protected data monitoring
+    private var protectedDataObserver: NSObjectProtocol?
+    internal var pendingSyncAfterUnlock = false
 
     // Per-user state (anchors)
     internal let defaults = UserDefaults(suiteName: "com.openwearables.healthsdk.state") ?? .standard
@@ -114,18 +117,8 @@ import Network
     /// Endpoint to upload health data for the current user
     internal var syncEndpoint: URL? {
         guard let userId = userId else { return nil }
-        
-        // Use custom URL if provided (replace {userId} or {user_id} placeholders)
-        if let customUrl = customSyncUrl {
-            let urlString = customUrl
-                .replacingOccurrences(of: "{userId}", with: userId)
-                .replacingOccurrences(of: "{user_id}", with: userId)
-            return URL(string: urlString)
-        }
-        
-        // Default endpoint
         guard let baseUrl = baseUrl else { return nil }
-        return URL(string: "\(baseUrl)/api/v1/sdk/users/\(userId)/sync/apple")
+        return URL(string: "\(baseUrl)/sdk/users/\(userId)/sync/apple")
     }
 
     // MARK: - Flutter registration
@@ -205,7 +198,6 @@ import Network
                 "accessToken": OpenWearablesHealthSdkKeychain.getAccessToken(),
                 "refreshToken": OpenWearablesHealthSdkKeychain.getRefreshToken(),
                 "apiKey": OpenWearablesHealthSdkKeychain.getApiKey(),
-                "customSyncUrl": OpenWearablesHealthSdkKeychain.getCustomSyncUrl(),
                 "isSyncActive": OpenWearablesHealthSdkKeychain.isSyncActive()
             ]
             result(credentials)
@@ -223,6 +215,7 @@ import Network
             self.cancelSync()
             self.stopBackgroundDelivery()
             self.stopNetworkMonitoring()
+            self.stopProtectedDataMonitoring()
             self.cancelAllBGTasks()
             OpenWearablesHealthSdkKeychain.setSyncActive(false)
             result(nil)
@@ -287,13 +280,8 @@ import Network
         
         self.baseUrl = baseUrl
         
-        // Use provided customSyncUrl, or restore from storage
-        if let providedCustomUrl = args["customSyncUrl"] as? String {
-            self.customSyncUrl = providedCustomUrl
-            OpenWearablesHealthSdkKeychain.saveCustomSyncUrl(providedCustomUrl)
-        } else if let storedCustomUrl = OpenWearablesHealthSdkKeychain.getCustomSyncUrl() {
-            self.customSyncUrl = storedCustomUrl
-        }
+        // Clear any previously stored customSyncUrl (feature removed)
+        OpenWearablesHealthSdkKeychain.saveCustomSyncUrl(nil)
         
         // Restore tracked types if available
         if let storedTypes = OpenWearablesHealthSdkKeychain.getTrackedTypes() {
@@ -301,11 +289,7 @@ import Network
             logMessage("📋 Restored \(trackedTypes.count) tracked types")
         }
         
-        if let customUrl = self.customSyncUrl {
-            logMessage("✅ Configured: customSyncUrl=\(customUrl)")
-        } else {
-            logMessage("✅ Configured: baseUrl=\(baseUrl)")
-        }
+        logMessage("✅ Configured: baseUrl=\(baseUrl)")
         
         // Auto-start sync if was previously active and session exists
         if OpenWearablesHealthSdkKeychain.isSyncActive() && OpenWearablesHealthSdkKeychain.hasSession() && !trackedTypes.isEmpty {
@@ -327,6 +311,7 @@ import Network
         
         self.startBackgroundDelivery()
         self.startNetworkMonitoring()
+        self.startProtectedDataMonitoring()
         self.scheduleAppRefresh()
         self.scheduleProcessing()
         
@@ -361,6 +346,11 @@ import Network
             return
         }
         
+        // Clear stale sync state, anchors and outbox from previous sessions
+        clearSyncSession()
+        resetAllAnchors()
+        clearOutbox()
+        
         // Save user ID and tokens
         OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: accessToken, refreshToken: refreshToken)
         
@@ -372,9 +362,6 @@ import Network
         
         let authMode = hasTokens ? "token" : "apiKey"
         logMessage("✅ Signed in: userId=\(userId), mode=\(authMode)")
-        
-        // Retry pending outbox items
-        self.retryOutboxIfPossible()
         
         result(nil)
     }
@@ -407,6 +394,7 @@ import Network
         
         stopBackgroundDelivery()
         stopNetworkMonitoring()
+        stopProtectedDataMonitoring()
         cancelAllBGTasks()
         
         // Reset anchors and fullDone flag BEFORE clearing keychain (need userId)
@@ -466,6 +454,7 @@ import Network
         
         self.startBackgroundDelivery()
         self.startNetworkMonitoring()
+        self.startProtectedDataMonitoring()
         
         self.initialSyncKickoff { started in
             if started {
@@ -611,6 +600,9 @@ import Network
             return
         }
         
+        let typeNames = queryableTypes.map { shortTypeName($0.identifier) }.joined(separator: ", ")
+        logMessage("📋 Types to sync (\(queryableTypes.count)): \(typeNames)")
+        
         // Check if we're resuming an interrupted sync
         let existingState = loadSyncState()
         let isResuming = existingState != nil && existingState!.hasProgress
@@ -633,14 +625,22 @@ import Network
             endpoint: endpoint,
             credential: credential,
             isBackground: isBackground
-        ) { [weak self] in
-            self?.finalizeSyncState()
-            self?.finishSync()
+        ) { [weak self] allTypesCompleted in
+            guard let self = self else { return }
+            if allTypesCompleted {
+                // All types processed successfully - mark full export as done
+                self.finalizeSyncState()
+            } else {
+                // Sync paused/failed mid-way - keep state for resume, do NOT mark fullDone
+                self.logMessage("⚠️ Sync incomplete - will resume remaining types later")
+            }
+            self.finishSync()
             completion()
         }
     }
     
     /// Process types one by one - streaming approach
+    /// Completion returns true if ALL types were processed, false if paused/failed mid-way
     private func processTypesSequentially(
         types: [HKSampleType],
         typeIndex: Int,
@@ -648,7 +648,7 @@ import Network
         endpoint: URL,
         credential: String,
         isBackground: Bool,
-        completion: @escaping ()->Void
+        completion: @escaping (Bool)->Void
     ) {
         // Check cancellation
         syncLock.lock()
@@ -656,13 +656,13 @@ import Network
         syncLock.unlock()
         if cancelled {
             logMessage("🛑 Sync cancelled - stopping type processing")
-            completion()
+            completion(false)
             return
         }
         
         guard typeIndex < types.count else {
-            // All types processed
-            completion()
+            // All types processed successfully
+            completion(true)
             return
         }
         
@@ -695,7 +695,7 @@ import Network
             chunkLimit: isBackground ? backgroundChunkSize : recordsPerChunk
         ) { [weak self] success in
             guard let self = self else {
-                completion()
+                completion(false)
                 return
             }
             
@@ -713,8 +713,7 @@ import Network
             } else {
                 // Failed - will resume from this type later
                 self.logMessage("⚠️ Sync paused at \(self.shortTypeName(type.identifier)), will resume later")
-                self.finishSync()
-                completion()
+                completion(false)
             }
         }
     }
@@ -753,8 +752,17 @@ import Network
                 }
                 
                 if let error = error {
-                    self.logMessage("❌ \(self.shortTypeName(type.identifier)): \(error.localizedDescription)")
-                    completion(false)
+                    // Check if this is a protected data error (device locked)
+                    if self.isProtectedDataError(error) {
+                        self.logMessage("🔒 \(self.shortTypeName(type.identifier)): protected data inaccessible (device locked) - pausing sync")
+                        self.pendingSyncAfterUnlock = true
+                        completion(false)
+                        return
+                    }
+                    // Skip this type and continue to the next one (don't pause entire sync for a single type error)
+                    self.logMessage("⚠️ \(self.shortTypeName(type.identifier)): \(error.localizedDescription) - skipping")
+                    self.updateTypeProgress(typeIdentifier: type.identifier, sentInChunk: 0, isComplete: true, anchorData: nil)
+                    completion(true)
                     return
                 }
                 
@@ -852,8 +860,17 @@ import Network
                 }
                 
                 if let error = error {
-                    self.logMessage("❌ \(self.shortTypeName(type.identifier)): \(error.localizedDescription)")
-                    completion(false)
+                    // Check if this is a protected data error (device locked)
+                    if self.isProtectedDataError(error) {
+                        self.logMessage("🔒 \(self.shortTypeName(type.identifier)): protected data inaccessible (device locked) - pausing sync")
+                        self.pendingSyncAfterUnlock = true
+                        completion(false)
+                        return
+                    }
+                    // Skip this type on error (don't pause entire sync)
+                    self.logMessage("⚠️ \(self.shortTypeName(type.identifier)): \(error.localizedDescription) - skipping")
+                    self.updateTypeProgress(typeIdentifier: type.identifier, sentInChunk: 0, isComplete: true, anchorData: nil)
+                    completion(true)
                     return
                 }
                 
@@ -1045,7 +1062,7 @@ import Network
     // MARK: - Token Refresh
     
     /// Attempts to refresh the access token using the refresh token.
-    /// Calls `POST {baseUrl}/api/v1/token/refresh` with the current refresh token.
+    /// Calls `POST {baseUrl}/token/refresh` with the current refresh token.
     /// On success, saves the new tokens and calls completion with `true`.
     /// On failure (or if no refresh token is available), calls completion with `false`.
     internal func attemptTokenRefresh(completion: @escaping (Bool) -> Void) {
@@ -1069,7 +1086,7 @@ import Network
         tokenRefreshCallbacks.append(completion)
         tokenRefreshLock.unlock()
         
-        guard let url = URL(string: "\(baseUrl)/api/v1/token/refresh") else {
+        guard let url = URL(string: "\(baseUrl)/token/refresh") else {
             logMessage("❌ Invalid refresh URL")
             finishTokenRefresh(success: false)
             return
@@ -1267,6 +1284,54 @@ import Network
         wasDisconnected = false
     }
     
+    // MARK: - Protected Data Monitoring
+    
+    internal func startProtectedDataMonitoring() {
+        guard protectedDataObserver == nil else { return }
+        
+        protectedDataObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            self.logMessage("🔓 Device unlocked - protected data available")
+            
+            if self.pendingSyncAfterUnlock {
+                self.pendingSyncAfterUnlock = false
+                self.logMessage("🔄 Triggering deferred sync after unlock...")
+                
+                // Small delay to let the system stabilize
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    self.syncLock.lock()
+                    let alreadySyncing = self.isSyncing
+                    self.syncLock.unlock()
+                    
+                    guard !alreadySyncing else {
+                        self.logMessage("⏭️ Sync already in progress after unlock")
+                        return
+                    }
+                    
+                    self.syncAll(fullExport: false) {
+                        self.logMessage("✅ Deferred sync after unlock completed")
+                    }
+                }
+            }
+        }
+        
+        logMessage("🔐 Protected data monitoring started")
+    }
+    
+    internal func stopProtectedDataMonitoring() {
+        if let observer = protectedDataObserver {
+            NotificationCenter.default.removeObserver(observer)
+            protectedDataObserver = nil
+        }
+        pendingSyncAfterUnlock = false
+    }
+    
     /// Called when upload fails - marks network as disconnected so we can auto-resume
     internal func markNetworkError() {
         wasDisconnected = true
@@ -1299,6 +1364,22 @@ import Network
                 self.logMessage("✅ Network resume sync completed")
             }
         }
+    }
+    
+    // MARK: - Protected Data Error Detection
+    
+    /// Checks if a HealthKit error is due to protected data being inaccessible (device locked).
+    /// HealthKit encrypts data independently of the general iOS data protection — even when
+    /// `UIApplication.shared.isProtectedDataAvailable` is true, HealthKit data may be locked.
+    internal func isProtectedDataError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        // HKError.errorDatabaseInaccessible (code 6) — HealthKit DB locked
+        if nsError.domain == "com.apple.healthkit" && nsError.code == 6 {
+            return true
+        }
+        // Fallback: match the localized description for older iOS versions
+        let msg = error.localizedDescription.lowercased()
+        return msg.contains("protected health data") || msg.contains("inaccessible")
     }
     
     // MARK: - FlutterStreamHandler

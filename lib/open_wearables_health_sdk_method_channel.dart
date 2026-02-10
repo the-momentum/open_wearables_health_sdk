@@ -23,10 +23,9 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
   });
 
   @override
-  Future<bool> configure({required String baseUrl, String? customSyncUrl}) async {
+  Future<bool> configure({required String baseUrl}) async {
     await _channel.invokeMethod<void>('configure', {
       'baseUrl': baseUrl,
-      if (customSyncUrl != null) 'customSyncUrl': customSyncUrl,
     });
 
     // Check if sync was auto-restored by querying isSyncActive

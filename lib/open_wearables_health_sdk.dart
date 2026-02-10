@@ -66,19 +66,10 @@ class OpenWearablesHealthSdk {
   /// to restore any existing user session from secure storage.
   ///
   /// - [environment]: The environment to connect to (default: production).
-  /// - [customSyncUrl]: Optional custom URL for syncing health data.
-  ///   Use this for local testing. The URL can include `{user_id}` or `{userId}`
-  ///   placeholder which will be replaced with the signed-in user's ID.
-  ///   Example: `http://localhost:3000/sdk/users/{user_id}/sync/apple`
   ///
   /// ```dart
   /// await OpenWearablesHealthSdk.configure(
   ///   environment: OpenWearablesHealthSdkEnvironment.sandbox,
-  /// );
-  ///
-  /// // Or with custom URL for local testing:
-  /// await OpenWearablesHealthSdk.configure(
-  ///   customSyncUrl: 'http://localhost:3000/sdk/users/{user_id}/sync/apple',
   /// );
   ///
   /// // Check if session was restored
@@ -88,12 +79,11 @@ class OpenWearablesHealthSdk {
   /// ```
   static Future<void> configure({
     OpenWearablesHealthSdkEnvironment environment = OpenWearablesHealthSdkEnvironment.production,
-    String? customSyncUrl,
   }) async {
     _config = OpenWearablesHealthSdkConfig(environment: environment);
 
     // Configure and check if sync was auto-restored
-    _isSyncActive = await _platform.configure(baseUrl: _config!.baseUrl, customSyncUrl: customSyncUrl);
+    _isSyncActive = await _platform.configure(baseUrl: _config!.baseUrl);
 
     // Try to restore existing session from Keychain
     final restoredUserId = await _platform.restoreSession();
@@ -317,7 +307,7 @@ class OpenWearablesHealthSdk {
   /// Returns stored credentials for debugging/display purposes.
   ///
   /// Returns a map with keys: userId, accessToken, refreshToken, apiKey,
-  /// customSyncUrl, isSyncActive.
+  /// isSyncActive.
   /// String values may be null if not stored. isSyncActive is a bool.
   static Future<Map<String, dynamic>> getStoredCredentials() async {
     return _platform.getStoredCredentials();

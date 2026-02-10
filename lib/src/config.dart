@@ -15,7 +15,7 @@ class OpenWearablesHealthSdkConfig {
 /// Environment for the Open Wearables platform.
 enum OpenWearablesHealthSdkEnvironment {
   /// Production environment.
-  production('https://open-wearables-production.up.railway.app/api/v1'),
+  production('https://api.openwearables.io/api/v1'),
 
   /// Sandbox/Development environment for testing.
   sandbox('https://sandbox.api.openwearables.io');

@@ -79,7 +79,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _customUrlController = TextEditingController(text: 'https://api.openwearables.io/api/v1/');
   final _userIdController = TextEditingController();
   final _tokenController = TextEditingController();
 
@@ -133,7 +132,6 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _userIdController.dispose();
     _tokenController.dispose();
-    _customUrlController.dispose();
     super.dispose();
   }
 
@@ -142,7 +140,8 @@ class _HomePageState extends State<HomePage> {
     try {
       final credentials = await OpenWearablesHealthSdk.getStoredCredentials();
       final hasUserId = credentials['userId'] != null && (credentials['userId'] as String).isNotEmpty;
-      final hasAccessToken = (credentials['accessToken'] != null && (credentials['accessToken'] as String).isNotEmpty) ||
+      final hasAccessToken =
+          (credentials['accessToken'] != null && (credentials['accessToken'] as String).isNotEmpty) ||
           (credentials['apiKey'] != null && (credentials['apiKey'] as String).isNotEmpty);
       final wasSyncActive = credentials['isSyncActive'] == true;
 
@@ -158,11 +157,7 @@ class _HomePageState extends State<HomePage> {
       });
 
       if (hasUserId && hasAccessToken && wasSyncActive) {
-        final storedCustomUrl = credentials['customSyncUrl'] as String?;
-        await OpenWearablesHealthSdk.configure(
-          environment: OpenWearablesHealthSdkEnvironment.production,
-          customSyncUrl: storedCustomUrl,
-        );
+        await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production);
         _checkStatus();
         _setStatus('Session restored');
       }
@@ -176,7 +171,6 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loginWithToken() async {
     final userId = _userIdController.text.trim();
     final token = _tokenController.text.trim();
-    final customUrl = _customUrlController.text.trim();
 
     if (userId.isEmpty || token.isEmpty) {
       _setStatus('Please fill User ID and Token');
@@ -186,24 +180,12 @@ class _HomePageState extends State<HomePage> {
     setState(() => _isLoading = true);
 
     try {
-      // If URL contains {user_id} placeholder, use it directly; otherwise treat as base URL ending with /api/v1/
-      final String fullSyncUrl;
-      if (customUrl.contains('{user_id}')) {
-        fullSyncUrl = customUrl;
-      } else {
-        final baseUrl = customUrl.isNotEmpty ? customUrl : 'https://api.openwearables.io/api/v1/';
-        // Remove trailing slash if present, then append path
-        final normalizedBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
-        fullSyncUrl = '$normalizedBase/sdk/users/{user_id}/sync/apple';
-      }
-      await OpenWearablesHealthSdk.configure(
-        environment: OpenWearablesHealthSdkEnvironment.production,
-        customSyncUrl: fullSyncUrl,
-      );
+      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production);
       _checkStatus();
 
       _setStatus('Signing in...');
-      await OpenWearablesHealthSdk.signIn(userId: userId, apiKey: token);
+      final bearerToken = token.startsWith('Bearer ') ? token : 'Bearer $token';
+      await OpenWearablesHealthSdk.signIn(userId: userId, accessToken: bearerToken, refreshToken: 'RADASDAFRSADDAS');
 
       _setStatus('Connected successfully');
       _checkStatus();
@@ -427,8 +409,6 @@ class _HomePageState extends State<HomePage> {
             icon: CupertinoIcons.lock,
             obscureText: true,
           ),
-          _buildDivider(),
-          _buildTextField(controller: _customUrlController, placeholder: 'API URL', icon: CupertinoIcons.link),
           Padding(
             padding: const EdgeInsets.all(20),
             child: SizedBox(

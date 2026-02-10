@@ -188,15 +188,23 @@ extension OpenWearablesHealthSdkPlugin {
                     )
                 } else {
                     // Log error response body for debugging
-                    var errorMsg = "❌ HTTP \(httpResponse.statusCode)"
+                    var errorMsg = "⚠️ HTTP \(httpResponse.statusCode)"
                     if let data = data, let errorBody = String(data: data, encoding: .utf8) {
-                        // Truncate error body to avoid huge logs
                         let truncated = errorBody.count > 200 ? String(errorBody.prefix(200)) + "..." : errorBody
                         errorMsg += " - \(truncated)"
                     }
                     self.logMessage(errorMsg)
                     try? FileManager.default.removeItem(atPath: payloadURL.path)
-                    completion(false)
+                    
+                    if (400...499).contains(httpResponse.statusCode) {
+                        // Client errors (4xx, non-401): skip this chunk and continue sync
+                        // The data is likely malformed or the endpoint doesn't accept it - retrying won't help
+                        self.logMessage("⚠️ Skipping chunk due to \(httpResponse.statusCode) - continuing sync")
+                        completion(true)
+                    } else {
+                        // Server errors (5xx) or other: pause sync for retry later
+                        completion(false)
+                    }
                 }
             } else {
                 self.logMessage("⚠️ No HTTP response")
@@ -211,10 +219,9 @@ extension OpenWearablesHealthSdkPlugin {
     
     /// Handles 401 response for combined uploads.
     ///
-    /// - Custom sync URL: always emits auth error immediately (different backend,
-    ///   SDK cannot refresh). Developer must call `updateTokens()` from Flutter.
-    /// - Standard URL + token mode: attempts automatic token refresh and retry.
-    /// - Standard URL + API key mode: emits auth error (API keys don't auto-refresh).
+    /// - Token mode: attempts automatic token refresh and retry.
+    /// - API key mode: emits auth error (API keys don't auto-refresh).
+    /// Always pauses sync on 401 (completion(false)).
     private func handle401ForUpload(
         payloadData: Data,
         endpoint: URL,
@@ -224,17 +231,7 @@ extension OpenWearablesHealthSdkPlugin {
         wasFullExport: Bool,
         completion: @escaping (Bool)->Void
     ) {
-        // Custom sync URL → never auto-refresh, it's a different backend.
-        // Developer handles it via authErrorStream + updateTokens().
-        if customSyncUrl != nil {
-            self.logMessage("🔒 401 with custom sync URL - emitting auth error (call updateTokens to continue)")
-            self.emitAuthError(statusCode: 401)
-            try? FileManager.default.removeItem(atPath: payloadPath)
-            completion(false)
-            return
-        }
-        
-        // Standard URL + API key → no auto-refresh for API keys.
+        // API key → no auto-refresh for API keys.
         if isApiKeyAuth {
             self.logMessage("🔒 401 with API key - emitting auth error")
             self.emitAuthError(statusCode: 401)

@@ -171,11 +171,6 @@ await OpenWearablesHealthSdk.configure(
 environment: OpenWearablesHealthSdkEnvironment.production,
 );
 
-// Or with custom URL for local testing:
-await OpenWearablesHealthSdk.configure(
-customSyncUrl: 'http://localhost:3000/sdk/users/{user_id}/sync/apple',
-);
-
 // Session is automatically restored if user was previously signed in
 if (OpenWearablesHealthSdk.isSignedIn) {
 print('Welcome back, ${OpenWearablesHealthSdk.currentUser?.userId}!');
@@ -335,7 +330,7 @@ class HealthService {
 
 | Method | Description |
 |--------|-------------|
-| `configure({environment, customSyncUrl})` | Initialize SDK and restore session |
+| `configure({environment})` | Initialize SDK and restore session |
 | `signIn({userId, accessToken?, refreshToken?, apiKey?})` | Sign in with tokens or API key |
 | `signOut()` | Sign out and clear all credentials |
 | `updateTokens({accessToken, refreshToken?})` | Update tokens without re-signing in |

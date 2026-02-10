@@ -85,7 +85,7 @@ extension OpenWearablesHealthSdkPlugin {
     @available(iOS 13.0, *)
     internal func handleAppRefresh(task: BGAppRefreshTask) {
         scheduleAppRefresh()
-
+        
         let opQueue = OperationQueue()
         let op = BlockOperation { [weak self] in
             let group = DispatchGroup()
@@ -112,7 +112,7 @@ extension OpenWearablesHealthSdkPlugin {
     @available(iOS 13.0, *)
     internal func handleProcessing(task: BGProcessingTask) {
         scheduleProcessing()
-
+        
         let opQueue = OperationQueue()
         let op = BlockOperation { [weak self] in
             let group = DispatchGroup()

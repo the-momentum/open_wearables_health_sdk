@@ -53,13 +53,7 @@ extension OpenWearablesHealthSdkPlugin {
         // Only treat 2xx as success (HEAD/redirects can happen in background)
         if let http = task.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             if http.statusCode == 401 {
-                if customSyncUrl != nil {
-                    // Custom sync URL → never auto-refresh, different backend.
-                    self.logMessage("🔒 Background 401 with custom sync URL - emitting auth error")
-                    DispatchQueue.main.async { [weak self] in
-                        self?.emitAuthError(statusCode: 401)
-                    }
-                } else if isApiKeyAuth {
+                if isApiKeyAuth {
                     // Standard URL + API key → no auto-refresh
                     self.logMessage("🔒 Background 401 with API key - emitting auth error")
                     DispatchQueue.main.async { [weak self] in
