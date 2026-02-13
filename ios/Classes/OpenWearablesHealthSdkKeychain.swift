@@ -13,6 +13,7 @@ internal class OpenWearablesHealthSdkKeychain {
     private static let userIdKey = "userId"
     private static let apiKeyKey = "apiKey"
     private static let baseUrlKey = "baseUrl"
+    private static let hostKey = "host"
     private static let customSyncUrlKey = "customSyncUrl"
     private static let syncActiveKey = "syncActive"
     private static let trackedTypesKey = "trackedTypes"
@@ -80,8 +81,22 @@ internal class OpenWearablesHealthSdkKeychain {
         return getAccessToken() != nil || getApiKey() != nil
     }
     
-    // MARK: - Custom Sync URL (stored in UserDefaults, not sensitive)
+    // MARK: - Host (stored in UserDefaults, not sensitive)
     
+    static func saveHost(_ host: String?) {
+        if let host = host {
+            defaults.set(host, forKey: hostKey)
+        } else {
+            defaults.removeObject(forKey: hostKey)
+        }
+        defaults.synchronize()
+    }
+    
+    static func getHost() -> String? {
+        return defaults.string(forKey: hostKey)
+    }
+    
+    // Legacy - kept for migration/cleanup
     static func saveCustomSyncUrl(_ url: String?) {
         if let url = url {
             defaults.set(url, forKey: customSyncUrlKey)
@@ -134,6 +149,7 @@ internal class OpenWearablesHealthSdkKeychain {
         delete(key: refreshTokenKey)
         delete(key: userIdKey)
         delete(key: apiKeyKey)
+        defaults.removeObject(forKey: hostKey)
         defaults.removeObject(forKey: customSyncUrlKey)
         defaults.removeObject(forKey: syncActiveKey)
         defaults.removeObject(forKey: trackedTypesKey)

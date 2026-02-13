@@ -7,7 +7,7 @@ import Network
 @objc(OpenWearablesHealthSdkPlugin) public class OpenWearablesHealthSdkPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate {
 
     // MARK: - Configuration State
-    internal var baseUrl: String?
+    internal var host: String?
     
     // MARK: - User State (loaded from Keychain)
     internal var userId: String? { OpenWearablesHealthSdkKeychain.getUserId() }
@@ -114,11 +114,19 @@ import Network
 
     // MARK: - API Endpoints
     
-    /// Endpoint to upload health data for the current user
+    /// Base URL for all API calls: `{host}/api/v1`
+    internal var apiBaseUrl: String? {
+        guard let host = host else { return nil }
+        let h = host.hasSuffix("/") ? String(host.dropLast()) : host
+        return "\(h)/api/v1"
+    }
+    
+    /// Endpoint to upload health data for the current user.
+    /// Uses `{host}/api/v1/sdk/users/{userId}/sync/apple`.
     internal var syncEndpoint: URL? {
         guard let userId = userId else { return nil }
-        guard let baseUrl = baseUrl else { return nil }
-        return URL(string: "\(baseUrl)/sdk/users/\(userId)/sync/apple")
+        guard let base = apiBaseUrl else { return nil }
+        return URL(string: "\(base)/sdk/users/\(userId)/sync/apple")
     }
 
     // MARK: - Flutter registration
@@ -198,6 +206,7 @@ import Network
                 "accessToken": OpenWearablesHealthSdkKeychain.getAccessToken(),
                 "refreshToken": OpenWearablesHealthSdkKeychain.getRefreshToken(),
                 "apiKey": OpenWearablesHealthSdkKeychain.getApiKey(),
+                "host": OpenWearablesHealthSdkKeychain.getHost(),
                 "isSyncActive": OpenWearablesHealthSdkKeychain.isSyncActive()
             ]
             result(credentials)
@@ -270,18 +279,16 @@ import Network
     // MARK: - Configure
     private func handleConfigure(call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
-              let baseUrl = args["baseUrl"] as? String else {
-            result(FlutterError(code: "bad_args", message: "Missing baseUrl", details: nil))
+              let host = args["host"] as? String else {
+            result(FlutterError(code: "bad_args", message: "Missing host", details: nil))
             return
         }
         
         // Clear Keychain if app was reinstalled
         OpenWearablesHealthSdkKeychain.clearKeychainIfReinstalled()
         
-        self.baseUrl = baseUrl
-        
-        // Clear any previously stored customSyncUrl (feature removed)
-        OpenWearablesHealthSdkKeychain.saveCustomSyncUrl(nil)
+        self.host = host
+        OpenWearablesHealthSdkKeychain.saveHost(host)
         
         // Restore tracked types if available
         if let storedTypes = OpenWearablesHealthSdkKeychain.getTrackedTypes() {
@@ -289,7 +296,7 @@ import Network
             logMessage("📋 Restored \(trackedTypes.count) tracked types")
         }
         
-        logMessage("✅ Configured: baseUrl=\(baseUrl)")
+        logMessage("✅ Configured: host=\(host)")
         
         // Auto-start sync if was previously active and session exists
         if OpenWearablesHealthSdkKeychain.isSyncActive() && OpenWearablesHealthSdkKeychain.hasSession() && !trackedTypes.isEmpty {
@@ -1062,7 +1069,7 @@ import Network
     // MARK: - Token Refresh
     
     /// Attempts to refresh the access token using the refresh token.
-    /// Calls `POST {baseUrl}/token/refresh` with the current refresh token.
+    /// Calls `POST {host}/api/v1/token/refresh` with the current refresh token.
     /// On success, saves the new tokens and calls completion with `true`.
     /// On failure (or if no refresh token is available), calls completion with `false`.
     internal func attemptTokenRefresh(completion: @escaping (Bool) -> Void) {
@@ -1075,9 +1082,9 @@ import Network
             return
         }
         
-        guard let refreshToken = self.refreshToken, let baseUrl = self.baseUrl else {
+        guard let refreshToken = self.refreshToken, let base = self.apiBaseUrl else {
             tokenRefreshLock.unlock()
-            logMessage("🔒 No refresh token or baseUrl - cannot refresh")
+            logMessage("🔒 No refresh token or host - cannot refresh")
             completion(false)
             return
         }
@@ -1086,7 +1093,7 @@ import Network
         tokenRefreshCallbacks.append(completion)
         tokenRefreshLock.unlock()
         
-        guard let url = URL(string: "\(baseUrl)/token/refresh") else {
+        guard let url = URL(string: "\(base)/token/refresh") else {
             logMessage("❌ Invalid refresh URL")
             finishTokenRefresh(success: false)
             return

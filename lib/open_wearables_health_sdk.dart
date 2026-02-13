@@ -65,11 +65,12 @@ class OpenWearablesHealthSdk {
   /// This must be called before any other method. It will also attempt
   /// to restore any existing user session from secure storage.
   ///
-  /// - [environment]: The environment to connect to (default: production).
+  /// - [host]: The host URL for the API (e.g. `https://api.example.com`).
+  ///   Only the host part — the SDK appends `/api/v1/...` paths automatically.
   ///
   /// ```dart
   /// await OpenWearablesHealthSdk.configure(
-  ///   environment: OpenWearablesHealthSdkEnvironment.sandbox,
+  ///   host: 'https://api.example.com',
   /// );
   ///
   /// // Check if session was restored
@@ -78,12 +79,12 @@ class OpenWearablesHealthSdk {
   /// }
   /// ```
   static Future<void> configure({
-    OpenWearablesHealthSdkEnvironment environment = OpenWearablesHealthSdkEnvironment.production,
+    required String host,
   }) async {
-    _config = OpenWearablesHealthSdkConfig(environment: environment);
+    _config = OpenWearablesHealthSdkConfig(host: host);
 
     // Configure and check if sync was auto-restored
-    _isSyncActive = await _platform.configure(baseUrl: _config!.baseUrl);
+    _isSyncActive = await _platform.configure(host: host);
 
     // Try to restore existing session from Keychain
     final restoredUserId = await _platform.restoreSession();

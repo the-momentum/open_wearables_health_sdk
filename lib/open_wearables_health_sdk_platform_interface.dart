@@ -17,9 +17,9 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   // MARK: - Configuration
 
-  /// Configures the plugin with base URL.
+  /// Configures the plugin with the host URL.
   /// Returns true if sync was auto-restored (session + sync was active).
-  Future<bool> configure({required String baseUrl}) {
+  Future<bool> configure({required String host}) {
     throw UnimplementedError('configure() has not been implemented.');
   }
 
