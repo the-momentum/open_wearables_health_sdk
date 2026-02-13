@@ -17,27 +17,32 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   // MARK: - Configuration
 
-  /// Configures the plugin with base URL and optional custom sync URL.
+  /// Configures the plugin with the host URL.
   /// Returns true if sync was auto-restored (session + sync was active).
-  Future<bool> configure({required String baseUrl, String? customSyncUrl}) {
+  Future<bool> configure({required String host}) {
     throw UnimplementedError('configure() has not been implemented.');
   }
 
   // MARK: - Authentication
 
-  /// Signs in a user with userId and accessToken.
+  /// Signs in a user with the given credentials.
   ///
-  /// The accessToken is obtained from the developer's backend which generates it
-  /// via communication with the Open Wearables API.
+  /// Two authentication modes are supported:
   ///
-  /// Optionally pass [appId], [appSecret], and [baseUrl] to enable automatic
-  /// token refresh when the 60-minute token expires.
+  /// **Mode 1: Token-based** — pass [accessToken] and [refreshToken].
+  /// The SDK will use these tokens directly for API calls and will
+  /// automatically refresh the access token on 401 errors.
+  ///
+  /// **Mode 2: API key** — pass [apiKey].
+  /// The SDK will send `X-Open-Wearables-API-Key` header with each request.
+  /// On 401, emits an auth error event (no automatic refresh for API keys).
+  ///
+  /// You must provide either (accessToken + refreshToken) or (apiKey).
   Future<void> signIn({
     required String userId,
-    required String accessToken,
-    String? appId,
-    String? appSecret,
-    String? baseUrl,
+    String? accessToken,
+    String? refreshToken,
+    String? apiKey,
   }) {
     throw UnimplementedError('signIn() has not been implemented.');
   }
@@ -45,6 +50,18 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
   /// Signs out the current user and clears all tokens from secure storage.
   Future<void> signOut() {
     throw UnimplementedError('signOut() has not been implemented.');
+  }
+
+  /// Updates the access token (and optionally refresh token) for the current session.
+  ///
+  /// Use this after receiving an auth error event when using a custom sync URL
+  /// or when your backend provides new tokens. The SDK will automatically
+  /// retry any pending uploads with the new credential.
+  Future<void> updateTokens({
+    required String accessToken,
+    String? refreshToken,
+  }) {
+    throw UnimplementedError('updateTokens() has not been implemented.');
   }
 
   /// Restores session from secure storage if available.
@@ -58,9 +75,7 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   /// Requests authorization from HealthKit/Health Connect.
   Future<bool> requestAuthorization({required List<String> types}) {
-    throw UnimplementedError(
-      'requestAuthorization() has not been implemented.',
-    );
+    throw UnimplementedError('requestAuthorization() has not been implemented.');
   }
 
   // MARK: - Sync Operations
@@ -83,9 +98,7 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   /// Returns stored credentials for debugging/display purposes.
   Future<Map<String, dynamic>> getStoredCredentials() {
-    throw UnimplementedError(
-      'getStoredCredentials() has not been implemented.',
-    );
+    throw UnimplementedError('getStoredCredentials() has not been implemented.');
   }
 
   /// Returns the current sync session status.

@@ -65,20 +65,12 @@ class OpenWearablesHealthSdk {
   /// This must be called before any other method. It will also attempt
   /// to restore any existing user session from secure storage.
   ///
-  /// - [environment]: The environment to connect to (default: production).
-  /// - [customSyncUrl]: Optional custom URL for syncing health data.
-  ///   Use this for local testing. The URL can include `{user_id}` or `{userId}`
-  ///   placeholder which will be replaced with the signed-in user's ID.
-  ///   Example: `http://localhost:3000/sdk/users/{user_id}/sync/apple`
+  /// - [host]: The host URL for the API (e.g. `https://api.example.com`).
+  ///   Only the host part — the SDK appends `/api/v1/...` paths automatically.
   ///
   /// ```dart
   /// await OpenWearablesHealthSdk.configure(
-  ///   environment: OpenWearablesHealthSdkEnvironment.sandbox,
-  /// );
-  ///
-  /// // Or with custom URL for local testing:
-  /// await OpenWearablesHealthSdk.configure(
-  ///   customSyncUrl: 'http://localhost:3000/sdk/users/{user_id}/sync/apple',
+  ///   host: 'https://api.example.com',
   /// );
   ///
   /// // Check if session was restored
@@ -87,13 +79,12 @@ class OpenWearablesHealthSdk {
   /// }
   /// ```
   static Future<void> configure({
-    OpenWearablesHealthSdkEnvironment environment = OpenWearablesHealthSdkEnvironment.production,
-    String? customSyncUrl,
+    required String host,
   }) async {
-    _config = OpenWearablesHealthSdkConfig(environment: environment);
+    _config = OpenWearablesHealthSdkConfig(host: host);
 
     // Configure and check if sync was auto-restored
-    _isSyncActive = await _platform.configure(baseUrl: _config!.baseUrl, customSyncUrl: customSyncUrl);
+    _isSyncActive = await _platform.configure(host: host);
 
     // Try to restore existing session from Keychain
     final restoredUserId = await _platform.restoreSession();
@@ -128,51 +119,65 @@ class OpenWearablesHealthSdk {
 
   // MARK: - Authentication
 
-  /// Signs in a user with userId and accessToken.
+  /// Signs in a user with the given credentials.
   ///
-  /// The accessToken must be obtained from your backend server, which
-  /// generates it via communication with the Open Wearables API.
+  /// Two authentication modes are supported:
   ///
-  /// ## Token Refresh
+  /// ## Mode 1: Token-based (accessToken + refreshToken)
   ///
-  /// Pass [appId], [appSecret], and [baseUrl] to enable automatic token
-  /// refresh. The token is valid for 60 minutes, and will be automatically
-  /// refreshed before sync operations if expired.
+  /// The [accessToken] and [refreshToken] must be obtained from your backend
+  /// server, which generates them via the Open Wearables API.
   ///
-  /// ## Flow
-  ///
-  /// 1. Your mobile app requests credentials from YOUR backend
-  /// 2. Your backend calls Open Wearables API to generate accessToken
-  /// 3. Your backend returns userId and accessToken to mobile app
-  /// 4. Mobile app calls this method with the credentials
+  /// When the server returns 401, the SDK will automatically refresh the
+  /// access token using the refresh token. If refresh fails, the SDK emits
+  /// an event on `MethodChannelOpenWearablesHealthSdk.authErrorStream`.
   ///
   /// ```dart
   /// final user = await OpenWearablesHealthSdk.signIn(
   ///   userId: response['userId'],
   ///   accessToken: response['accessToken'],
-  ///   appId: 'your-app-id',        // For auto-refresh
-  ///   appSecret: 'your-app-secret', // For auto-refresh
-  ///   baseUrl: 'https://api.openwearables.io', // For auto-refresh
+  ///   refreshToken: response['refreshToken'],
   /// );
   /// ```
   ///
+  /// ## Mode 2: API key (apiKey)
+  ///
+  /// Pass [apiKey] for simple authentication using the
+  /// `X-Open-Wearables-API-Key` header. On 401, the SDK emits an auth
+  /// error event (no automatic token refresh for API keys).
+  ///
+  /// ```dart
+  /// final user = await OpenWearablesHealthSdk.signIn(
+  ///   userId: 'test-user',
+  ///   apiKey: 'your-api-key',
+  /// );
+  /// ```
+  ///
+  /// You must provide either (accessToken + refreshToken) or (apiKey).
+  ///
   /// Throws [NotConfiguredException] if [configure] was not called.
   /// Throws [SignInException] if sign-in fails.
+  /// Throws [ArgumentError] if neither credential set is provided.
   static Future<OpenWearablesHealthSdkUser> signIn({
     required String userId,
-    required String accessToken,
-    String? appId,
-    String? appSecret,
-    String? baseUrl,
+    String? accessToken,
+    String? refreshToken,
+    String? apiKey,
   }) async {
     if (_config == null) throw const NotConfiguredException();
+
+    final hasTokens = accessToken != null && refreshToken != null;
+    final hasApiKey = apiKey != null;
+
+    if (!hasTokens && !hasApiKey) {
+      throw ArgumentError('You must provide either (accessToken + refreshToken) or (apiKey).');
+    }
 
     await _platform.signIn(
       userId: userId,
       accessToken: accessToken,
-      appId: appId,
-      appSecret: appSecret,
-      baseUrl: baseUrl,
+      refreshToken: refreshToken,
+      apiKey: apiKey,
     );
 
     _currentUser = OpenWearablesHealthSdkUser(userId: userId);
@@ -195,6 +200,42 @@ class OpenWearablesHealthSdk {
       _currentUser = null;
       _isSyncActive = false;
     }
+  }
+
+  /// Updates the access token (and optionally the refresh token) for the
+  /// current session without signing out and back in.
+  ///
+  /// Use this when:
+  /// - You receive an auth error event while using a custom sync URL
+  ///   and need to inject new tokens obtained from your own backend.
+  /// - Your backend provides rotated tokens that you want to push
+  ///   into the SDK.
+  ///
+  /// After updating, the SDK will automatically retry any pending
+  /// uploads with the new credential.
+  ///
+  /// ```dart
+  /// // Listen for auth errors (e.g., from custom sync URL)
+  /// MethodChannelOpenWearablesHealthSdk.authErrorStream.listen((error) async {
+  ///   final newTokens = await myBackend.refreshTokens();
+  ///   await OpenWearablesHealthSdk.updateTokens(
+  ///     accessToken: newTokens['accessToken'],
+  ///     refreshToken: newTokens['refreshToken'],
+  ///   );
+  /// });
+  /// ```
+  ///
+  /// Throws [NotConfiguredException] if [configure] was not called.
+  /// Throws [NotSignedInException] if no user is signed in.
+  static Future<void> updateTokens({
+    required String accessToken,
+    String? refreshToken,
+  }) async {
+    _ensureSignedIn();
+    await _platform.updateTokens(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+    );
   }
 
   // MARK: - Health Data Authorization
@@ -266,7 +307,8 @@ class OpenWearablesHealthSdk {
 
   /// Returns stored credentials for debugging/display purposes.
   ///
-  /// Returns a map with keys: userId, accessToken, customSyncUrl, isSyncActive.
+  /// Returns a map with keys: userId, accessToken, refreshToken, apiKey,
+  /// isSyncActive.
   /// String values may be null if not stored. isSyncActive is a bool.
   static Future<Map<String, dynamic>> getStoredCredentials() async {
     return _platform.getStoredCredentials();

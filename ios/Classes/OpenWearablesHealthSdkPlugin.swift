@@ -7,12 +7,54 @@ import Network
 @objc(OpenWearablesHealthSdkPlugin) public class OpenWearablesHealthSdkPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate {
 
     // MARK: - Configuration State
-    internal var baseUrl: String?
-    internal var customSyncUrl: String?
+    internal var host: String?
     
     // MARK: - User State (loaded from Keychain)
     internal var userId: String? { OpenWearablesHealthSdkKeychain.getUserId() }
     internal var accessToken: String? { OpenWearablesHealthSdkKeychain.getAccessToken() }
+    internal var refreshToken: String? { OpenWearablesHealthSdkKeychain.getRefreshToken() }
+    internal var apiKey: String? { OpenWearablesHealthSdkKeychain.getApiKey() }
+    
+    // Token refresh state (to avoid concurrent refreshes)
+    private var isRefreshingToken = false
+    private let tokenRefreshLock = NSLock()
+    private var tokenRefreshCallbacks: [(Bool) -> Void] = []
+    
+    // MARK: - Auth Helpers
+    
+    /// Whether the SDK is using API key authentication (vs token-based).
+    internal var isApiKeyAuth: Bool {
+        return apiKey != nil && accessToken == nil
+    }
+    
+    /// Returns the current auth credential (accessToken or apiKey), whichever is active.
+    internal var authCredential: String? {
+        return accessToken ?? apiKey
+    }
+    
+    /// Returns true if the user has any valid auth credential.
+    internal var hasAuth: Bool {
+        return authCredential != nil
+    }
+    
+    /// Applies the correct auth header to a URLRequest based on the current auth mode.
+    internal func applyAuth(to request: inout URLRequest) {
+        if let token = accessToken {
+            request.setValue(token, forHTTPHeaderField: "Authorization")
+        } else if let key = apiKey {
+            request.setValue(key, forHTTPHeaderField: "X-Open-Wearables-API-Key")
+        }
+    }
+    
+    /// Applies the correct auth header using an explicit credential string.
+    /// Uses API key header if in API key mode, otherwise Authorization header.
+    internal func applyAuth(to request: inout URLRequest, credential: String) {
+        if isApiKeyAuth {
+            request.setValue(credential, forHTTPHeaderField: "X-Open-Wearables-API-Key")
+        } else {
+            request.setValue(credential, forHTTPHeaderField: "Authorization")
+        }
+    }
     
     // MARK: - HealthKit State
     internal let healthStore = HKHealthStore()
@@ -31,12 +73,17 @@ import Network
     // Sync flags
     internal var isInitialSyncInProgress = false
     private var isSyncing: Bool = false
+    private var syncCancelled: Bool = false
     private let syncLock = NSLock()
     
     // Network monitoring
     private var networkMonitor: NWPathMonitor?
     private let networkMonitorQueue = DispatchQueue(label: "health_sync_network_monitor")
     private var wasDisconnected = false
+    
+    // Protected data monitoring
+    private var protectedDataObserver: NSObjectProtocol?
+    internal var pendingSyncAfterUnlock = false
 
     // Per-user state (anchors)
     internal let defaults = UserDefaults(suiteName: "com.openwearables.healthsdk.state") ?? .standard
@@ -56,6 +103,10 @@ import Network
     // Log event sink
     private var logEventSink: FlutterEventSink?
     private var logEventChannel: FlutterEventChannel?
+    
+    // Auth error event sink (for 401 handling)
+    internal var authErrorEventSink: FlutterEventSink?
+    private var authErrorEventChannel: FlutterEventChannel?
 
     // Background response data buffer
     internal var backgroundDataBuffer: [Int: Data] = [:]
@@ -63,21 +114,19 @@ import Network
 
     // MARK: - API Endpoints
     
-    /// Endpoint to upload health data for the current user
+    /// Base URL for all API calls: `{host}/api/v1`
+    internal var apiBaseUrl: String? {
+        guard let host = host else { return nil }
+        let h = host.hasSuffix("/") ? String(host.dropLast()) : host
+        return "\(h)/api/v1"
+    }
+    
+    /// Endpoint to upload health data for the current user.
+    /// Uses `{host}/api/v1/sdk/users/{userId}/sync/apple`.
     internal var syncEndpoint: URL? {
         guard let userId = userId else { return nil }
-        
-        // Use custom URL if provided (replace {userId} or {user_id} placeholders)
-        if let customUrl = customSyncUrl {
-            let urlString = customUrl
-                .replacingOccurrences(of: "{userId}", with: userId)
-                .replacingOccurrences(of: "{user_id}", with: userId)
-            return URL(string: urlString)
-        }
-        
-        // Default endpoint
-        guard let baseUrl = baseUrl else { return nil }
-        return URL(string: "\(baseUrl)/api/v1/sdk/users/\(userId)/sync/apple")
+        guard let base = apiBaseUrl else { return nil }
+        return URL(string: "\(base)/sdk/users/\(userId)/sync/apple")
     }
 
     // MARK: - Flutter registration
@@ -90,6 +139,11 @@ import Network
         let logChannel = FlutterEventChannel(name: "open_wearables_health_sdk/logs", binaryMessenger: registrar.messenger())
         instance.logEventChannel = logChannel
         logChannel.setStreamHandler(instance)
+        
+        // Auth error channel for 401 handling
+        let authErrorChannel = FlutterEventChannel(name: "open_wearables_health_sdk/auth_errors", binaryMessenger: registrar.messenger())
+        instance.authErrorEventChannel = authErrorChannel
+        authErrorChannel.setStreamHandler(AuthErrorStreamHandler(plugin: instance))
     }
     
     @objc public static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
@@ -143,11 +197,16 @@ import Network
         case "isSyncActive":
             result(OpenWearablesHealthSdkKeychain.isSyncActive())
             
+        case "updateTokens":
+            handleUpdateTokens(call: call, result: result)
+            
         case "getStoredCredentials":
             let credentials: [String: Any?] = [
                 "userId": OpenWearablesHealthSdkKeychain.getUserId(),
                 "accessToken": OpenWearablesHealthSdkKeychain.getAccessToken(),
-                "customSyncUrl": OpenWearablesHealthSdkKeychain.getCustomSyncUrl(),
+                "refreshToken": OpenWearablesHealthSdkKeychain.getRefreshToken(),
+                "apiKey": OpenWearablesHealthSdkKeychain.getApiKey(),
+                "host": OpenWearablesHealthSdkKeychain.getHost(),
                 "isSyncActive": OpenWearablesHealthSdkKeychain.isSyncActive()
             ]
             result(credentials)
@@ -162,8 +221,10 @@ import Network
             handleStartBackgroundSync(result: result)
 
         case "stopBackgroundSync":
+            self.cancelSync()
             self.stopBackgroundDelivery()
             self.stopNetworkMonitoring()
+            self.stopProtectedDataMonitoring()
             self.cancelAllBGTasks()
             OpenWearablesHealthSdkKeychain.setSyncActive(false)
             result(nil)
@@ -174,7 +235,7 @@ import Network
             self.clearOutbox()
             logMessage("🔄 Anchors reset - will perform full sync on next sync")
             // If sync is active, trigger a new full sync
-            if OpenWearablesHealthSdkKeychain.isSyncActive() && self.accessToken != nil {
+            if OpenWearablesHealthSdkKeychain.isSyncActive() && self.hasAuth {
                 logMessage("🔄 Triggering full export after reset...")
                 self.syncAll(fullExport: true) {
                     self.logMessage("✅ Full export after reset completed")
@@ -218,23 +279,16 @@ import Network
     // MARK: - Configure
     private func handleConfigure(call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
-              let baseUrl = args["baseUrl"] as? String else {
-            result(FlutterError(code: "bad_args", message: "Missing baseUrl", details: nil))
+              let host = args["host"] as? String else {
+            result(FlutterError(code: "bad_args", message: "Missing host", details: nil))
             return
         }
         
         // Clear Keychain if app was reinstalled
         OpenWearablesHealthSdkKeychain.clearKeychainIfReinstalled()
         
-        self.baseUrl = baseUrl
-        
-        // Use provided customSyncUrl, or restore from storage
-        if let providedCustomUrl = args["customSyncUrl"] as? String {
-            self.customSyncUrl = providedCustomUrl
-            OpenWearablesHealthSdkKeychain.saveCustomSyncUrl(providedCustomUrl)
-        } else if let storedCustomUrl = OpenWearablesHealthSdkKeychain.getCustomSyncUrl() {
-            self.customSyncUrl = storedCustomUrl
-        }
+        self.host = host
+        OpenWearablesHealthSdkKeychain.saveHost(host)
         
         // Restore tracked types if available
         if let storedTypes = OpenWearablesHealthSdkKeychain.getTrackedTypes() {
@@ -242,11 +296,7 @@ import Network
             logMessage("📋 Restored \(trackedTypes.count) tracked types")
         }
         
-        if let customUrl = self.customSyncUrl {
-            logMessage("✅ Configured: customSyncUrl=\(customUrl)")
-        } else {
-            logMessage("✅ Configured: baseUrl=\(baseUrl)")
-        }
+        logMessage("✅ Configured: host=\(host)")
         
         // Auto-start sync if was previously active and session exists
         if OpenWearablesHealthSdkKeychain.isSyncActive() && OpenWearablesHealthSdkKeychain.hasSession() && !trackedTypes.isEmpty {
@@ -261,62 +311,82 @@ import Network
     
     // MARK: - Auto Restore Sync
     private func autoRestoreSync() {
-        guard userId != nil, accessToken != nil else {
+        guard userId != nil, hasAuth else {
             logMessage("⚠️ Cannot auto-restore: no session")
             return
         }
         
         self.startBackgroundDelivery()
         self.startNetworkMonitoring()
+        self.startProtectedDataMonitoring()
         self.scheduleAppRefresh()
         self.scheduleProcessing()
         
         // Check for resumable sync session and resume if found
         if hasResumableSyncSession() {
             logMessage("📂 Found interrupted sync, will resume...")
-            // Trigger sync - it will automatically detect and resume
-            refreshTokenIfNeeded { [weak self] success in
-                guard let self = self else { return }
-                if success {
-                    self.syncAll(fullExport: false) {
-                        self.logMessage("✅ Resumed sync completed")
-                    }
-                } else {
-                    self.logMessage("⚠️ Token refresh failed, will retry later")
-                }
+            self.syncAll(fullExport: false) {
+                self.logMessage("✅ Resumed sync completed")
             }
         }
         
         logMessage("✅ Background sync auto-restored")
     }
     
-    // MARK: - Sign In (with userId and accessToken)
+    // MARK: - Sign In (with tokens or API key)
     private func handleSignIn(call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
-              let userId = args["userId"] as? String,
-              let accessToken = args["accessToken"] as? String else {
-            result(FlutterError(code: "bad_args", message: "Missing userId or accessToken", details: nil))
+              let userId = args["userId"] as? String else {
+            result(FlutterError(code: "bad_args", message: "Missing userId", details: nil))
             return
         }
         
-        // Save to Keychain
-        OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: accessToken)
+        let accessToken = args["accessToken"] as? String
+        let refreshToken = args["refreshToken"] as? String
+        let apiKey = args["apiKey"] as? String
         
-        // Save app credentials for token refresh (optional - only if provided)
-        if let appId = args["appId"] as? String,
-           let appSecret = args["appSecret"] as? String,
-           let baseUrl = args["baseUrl"] as? String {
-            OpenWearablesHealthSdkKeychain.saveAppCredentials(appId: appId, appSecret: appSecret, baseUrl: baseUrl)
-            logMessage("✅ App credentials saved for refresh")
+        let hasTokens = accessToken != nil && refreshToken != nil
+        let hasApiKey = apiKey != nil
+        
+        guard hasTokens || hasApiKey else {
+            result(FlutterError(code: "bad_args", message: "Provide (accessToken + refreshToken) or (apiKey)", details: nil))
+            return
         }
         
-        // Save token expiry (60 minutes from now)
-        let expiresAt = Date().addingTimeInterval(60 * 60)
-        OpenWearablesHealthSdkKeychain.saveTokenExpiry(expiresAt)
+        // Clear stale sync state, anchors and outbox from previous sessions
+        clearSyncSession()
+        resetAllAnchors()
+        clearOutbox()
         
-        logMessage("✅ Signed in: userId=\(userId)")
+        // Save user ID and tokens
+        OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: accessToken, refreshToken: refreshToken)
         
-        // Retry pending outbox items
+        // Save API key if provided
+        if let apiKey = apiKey {
+            OpenWearablesHealthSdkKeychain.saveApiKey(apiKey)
+            logMessage("✅ API key saved")
+        }
+        
+        let authMode = hasTokens ? "token" : "apiKey"
+        logMessage("✅ Signed in: userId=\(userId), mode=\(authMode)")
+        
+        result(nil)
+    }
+    
+    // MARK: - Update Tokens
+    private func handleUpdateTokens(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let accessToken = args["accessToken"] as? String else {
+            result(FlutterError(code: "bad_args", message: "Missing accessToken", details: nil))
+            return
+        }
+        
+        let refreshToken = args["refreshToken"] as? String
+        
+        OpenWearablesHealthSdkKeychain.updateTokens(accessToken: accessToken, refreshToken: refreshToken)
+        logMessage("🔄 Tokens updated from Flutter")
+        
+        // Retry any pending outbox items with the new token
         self.retryOutboxIfPossible()
         
         result(nil)
@@ -326,8 +396,12 @@ import Network
     private func handleSignOut(result: @escaping FlutterResult) {
         logMessage("🔓 Signing out")
         
+        // Cancel any in-progress sync first
+        cancelSync()
+        
         stopBackgroundDelivery()
         stopNetworkMonitoring()
+        stopProtectedDataMonitoring()
         cancelAllBGTasks()
         
         // Reset anchors and fullDone flag BEFORE clearing keychain (need userId)
@@ -380,13 +454,14 @@ import Network
     
     // MARK: - Start Background Sync
     private func handleStartBackgroundSync(result: @escaping FlutterResult) {
-        guard userId != nil, accessToken != nil else {
+        guard userId != nil, hasAuth else {
             result(FlutterError(code: "not_signed_in", message: "Not signed in", details: nil))
             return
         }
         
         self.startBackgroundDelivery()
         self.startNetworkMonitoring()
+        self.startProtectedDataMonitoring()
         
         self.initialSyncKickoff { started in
             if started {
@@ -402,7 +477,7 @@ import Network
         
         let canStart = HKHealthStore.isHealthDataAvailable() &&
                       self.syncEndpoint != nil &&
-                      self.accessToken != nil &&
+                      self.hasAuth &&
                       !self.trackedTypes.isEmpty
         
         // Save sync active state for restoration after restart
@@ -413,9 +488,9 @@ import Network
         result(canStart)
     }
     
-    // MARK: - Get Access Token
-    internal func getAccessToken() -> String? {
-        return accessToken
+    // MARK: - Get Auth Credential
+    internal func getAuthCredential() -> String? {
+        return authCredential
     }
     
     // MARK: - Helper: Get queryable types (filtering unsupported correlations)
@@ -431,74 +506,6 @@ import Network
         }
     }
     
-    // MARK: - Token Refresh
-    internal func refreshTokenIfNeeded(completion: @escaping (Bool) -> Void) {
-        // Check if token is expired
-        guard OpenWearablesHealthSdkKeychain.isTokenExpired() else {
-            completion(true) 
-            return
-        }
-        
-        logMessage("🔄 Token expired, refreshing...")
-        
-        // Check if we have credentials to refresh
-        guard OpenWearablesHealthSdkKeychain.hasRefreshCredentials(),
-              let appId = OpenWearablesHealthSdkKeychain.getAppId(),
-              let appSecret = OpenWearablesHealthSdkKeychain.getAppSecret(),
-              let baseUrl = OpenWearablesHealthSdkKeychain.getBaseUrl(),
-              let userId = OpenWearablesHealthSdkKeychain.getUserId() else {
-            logMessage("❌ Missing credentials for token refresh")
-            completion(false)
-            return
-        }
-        
-        
-        let urlString = "\(baseUrl)/api/v1/users/\(userId)/token"
-        guard let url = URL(string: urlString) else {
-            logMessage("❌ Invalid refresh URL")
-            completion(false)
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let body: [String: Any] = ["app_id": appId, "app_secret": appSecret]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        let task = foregroundSession.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { completion(false); return }
-            
-            if let error = error {
-                self.logMessage("❌ Token refresh failed: \(error.localizedDescription)")
-                completion(false)
-                return
-            }
-            
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200,
-                  let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let newToken = json["access_token"] as? String else {
-                self.logMessage("❌ Token refresh: invalid response")
-                completion(false)
-                return
-            }
-            
-            
-            let fullToken = newToken.hasPrefix("Bearer ") ? newToken : "Bearer \(newToken)"
-            OpenWearablesHealthSdkKeychain.saveCredentials(userId: userId, accessToken: fullToken)
-            
-            
-            let expiresAt = Date().addingTimeInterval(60 * 60)
-            OpenWearablesHealthSdkKeychain.saveTokenExpiry(expiresAt)
-            
-            self.logMessage("✅ Token refreshed successfully")
-            completion(true)
-        }
-        task.resume()
-    }
 
     // MARK: - Authorization
     internal func requestAuthorization(completion: @escaping (Bool)->Void) {
@@ -521,22 +528,12 @@ import Network
     internal func syncAll(fullExport: Bool, completion: @escaping ()->Void) {
         guard !trackedTypes.isEmpty else { completion(); return }
         
-        refreshTokenIfNeeded { [weak self] success in
-            guard let self = self else { completion(); return }
-            
-            guard success else {
-                self.logMessage("❌ Token refresh failed, cannot sync")
-                completion()
-                return
-            }
-            
-            guard self.accessToken != nil else {
-                self.logMessage("❌ No access token for sync")
-                completion()
-                return
-            }
-            self.collectAllData(fullExport: fullExport, completion: completion)
+        guard self.hasAuth else {
+            self.logMessage("❌ No auth credential for sync")
+            completion()
+            return
         }
+        self.collectAllData(fullExport: fullExport, completion: completion)
     }
     
     // MARK: - Debounced sync
@@ -595,8 +592,8 @@ import Network
             return
         }
         
-        guard let token = self.accessToken, let endpoint = self.syncEndpoint else {
-            logMessage("❌ No token or endpoint")
+        guard let credential = self.authCredential, let endpoint = self.syncEndpoint else {
+            logMessage("❌ No auth credential or endpoint")
             finishSync()
             completion()
             return
@@ -609,6 +606,9 @@ import Network
             completion()
             return
         }
+        
+        let typeNames = queryableTypes.map { shortTypeName($0.identifier) }.joined(separator: ", ")
+        logMessage("📋 Types to sync (\(queryableTypes.count)): \(typeNames)")
         
         // Check if we're resuming an interrupted sync
         let existingState = loadSyncState()
@@ -630,28 +630,46 @@ import Network
             typeIndex: startIndex,
             fullExport: fullExport,
             endpoint: endpoint,
-            token: token,
+            credential: credential,
             isBackground: isBackground
-        ) { [weak self] in
-            self?.finalizeSyncState()
-            self?.finishSync()
+        ) { [weak self] allTypesCompleted in
+            guard let self = self else { return }
+            if allTypesCompleted {
+                // All types processed successfully - mark full export as done
+                self.finalizeSyncState()
+            } else {
+                // Sync paused/failed mid-way - keep state for resume, do NOT mark fullDone
+                self.logMessage("⚠️ Sync incomplete - will resume remaining types later")
+            }
+            self.finishSync()
             completion()
         }
     }
     
     /// Process types one by one - streaming approach
+    /// Completion returns true if ALL types were processed, false if paused/failed mid-way
     private func processTypesSequentially(
         types: [HKSampleType],
         typeIndex: Int,
         fullExport: Bool,
         endpoint: URL,
-        token: String,
+        credential: String,
         isBackground: Bool,
-        completion: @escaping ()->Void
+        completion: @escaping (Bool)->Void
     ) {
+        // Check cancellation
+        syncLock.lock()
+        let cancelled = syncCancelled
+        syncLock.unlock()
+        if cancelled {
+            logMessage("🛑 Sync cancelled - stopping type processing")
+            completion(false)
+            return
+        }
+        
         guard typeIndex < types.count else {
-            // All types processed
-            completion()
+            // All types processed successfully
+            completion(true)
             return
         }
         
@@ -665,7 +683,7 @@ import Network
                 typeIndex: typeIndex + 1,
                 fullExport: fullExport,
                 endpoint: endpoint,
-                token: token,
+                credential: credential,
                 isBackground: isBackground,
                 completion: completion
             )
@@ -680,11 +698,11 @@ import Network
             type: type,
             fullExport: fullExport,
             endpoint: endpoint,
-            token: token,
+            credential: credential,
             chunkLimit: isBackground ? backgroundChunkSize : recordsPerChunk
         ) { [weak self] success in
             guard let self = self else {
-                completion()
+                completion(false)
                 return
             }
             
@@ -695,15 +713,14 @@ import Network
                     typeIndex: typeIndex + 1,
                     fullExport: fullExport,
                     endpoint: endpoint,
-                    token: token,
+                    credential: credential,
                     isBackground: isBackground,
                     completion: completion
                 )
             } else {
                 // Failed - will resume from this type later
                 self.logMessage("⚠️ Sync paused at \(self.shortTypeName(type.identifier)), will resume later")
-                self.finishSync()
-                completion()
+                completion(false)
             }
         }
     }
@@ -713,7 +730,7 @@ import Network
         type: HKSampleType,
         fullExport: Bool,
         endpoint: URL,
-        token: String,
+        credential: String,
         chunkLimit: Int,
         completion: @escaping (Bool)->Void
     ) {
@@ -732,9 +749,27 @@ import Network
                     return
                 }
                 
-                if let error = error {
-                    self.logMessage("❌ \(self.shortTypeName(type.identifier)): \(error.localizedDescription)")
+                // Check cancellation
+                self.syncLock.lock()
+                let cancelled = self.syncCancelled
+                self.syncLock.unlock()
+                if cancelled {
                     completion(false)
+                    return
+                }
+                
+                if let error = error {
+                    // Check if this is a protected data error (device locked)
+                    if self.isProtectedDataError(error) {
+                        self.logMessage("🔒 \(self.shortTypeName(type.identifier)): protected data inaccessible (device locked) - pausing sync")
+                        self.pendingSyncAfterUnlock = true
+                        completion(false)
+                        return
+                    }
+                    // Skip this type and continue to the next one (don't pause entire sync for a single type error)
+                    self.logMessage("⚠️ \(self.shortTypeName(type.identifier)): \(error.localizedDescription) - skipping")
+                    self.updateTypeProgress(typeIdentifier: type.identifier, sentInChunk: 0, isComplete: true, anchorData: nil)
+                    completion(true)
                     return
                 }
                 
@@ -771,7 +806,7 @@ import Network
                     anchorData: anchorData,
                     isLastChunk: isLastChunk,
                     endpoint: endpoint,
-                    token: token
+                    credential: credential
                 ) { [weak self] success in
                     guard let self = self else {
                         completion(false)
@@ -788,7 +823,7 @@ import Network
                                 type: type,
                                 anchor: newAnchor,
                                 endpoint: endpoint,
-                                token: token,
+                                credential: credential,
                                 chunkLimit: chunkLimit,
                                 completion: completion
                             )
@@ -809,7 +844,7 @@ import Network
         type: HKSampleType,
         anchor: HKQueryAnchor?,
         endpoint: URL,
-        token: String,
+        credential: String,
         chunkLimit: Int,
         completion: @escaping (Bool)->Void
     ) {
@@ -822,9 +857,27 @@ import Network
                     return
                 }
                 
-                if let error = error {
-                    self.logMessage("❌ \(self.shortTypeName(type.identifier)): \(error.localizedDescription)")
+                // Check cancellation
+                self.syncLock.lock()
+                let cancelled = self.syncCancelled
+                self.syncLock.unlock()
+                if cancelled {
                     completion(false)
+                    return
+                }
+                
+                if let error = error {
+                    // Check if this is a protected data error (device locked)
+                    if self.isProtectedDataError(error) {
+                        self.logMessage("🔒 \(self.shortTypeName(type.identifier)): protected data inaccessible (device locked) - pausing sync")
+                        self.pendingSyncAfterUnlock = true
+                        completion(false)
+                        return
+                    }
+                    // Skip this type on error (don't pause entire sync)
+                    self.logMessage("⚠️ \(self.shortTypeName(type.identifier)): \(error.localizedDescription) - skipping")
+                    self.updateTypeProgress(typeIdentifier: type.identifier, sentInChunk: 0, isComplete: true, anchorData: nil)
+                    completion(true)
                     return
                 }
                 
@@ -855,7 +908,7 @@ import Network
                     anchorData: anchorData,
                     isLastChunk: isLastChunk,
                     endpoint: endpoint,
-                    token: token
+                    credential: credential
                 ) { [weak self] success in
                     guard let self = self else {
                         completion(false)
@@ -870,7 +923,7 @@ import Network
                                 type: type,
                                 anchor: newAnchor,
                                 endpoint: endpoint,
-                                token: token,
+                                credential: credential,
                                 chunkLimit: chunkLimit,
                                 completion: completion
                             )
@@ -893,14 +946,14 @@ import Network
         anchorData: Data?,
         isLastChunk: Bool,
         endpoint: URL,
-        token: String,
+        credential: String,
         completion: @escaping (Bool)->Void
     ) {
         enqueueCombinedUpload(
             payload: payload,
             anchors: [:],  // We handle anchors separately now
             endpoint: endpoint,
-            token: token,
+            credential: credential,
             wasFullExport: false
         ) { [weak self] success in
             guard let self = self else {
@@ -930,6 +983,50 @@ import Network
         syncLock.unlock()
     }
     
+    /// Cancels any in-progress sync and all pending/in-flight network tasks
+    internal func cancelSync() {
+        logMessage("🛑 Cancelling sync...")
+        
+        // Set cancellation flag - checked by processTypesSequentially / processTypeStreaming
+        syncLock.lock()
+        syncCancelled = true
+        syncLock.unlock()
+        
+        // Cancel debounced sync
+        pendingSyncWorkItem?.cancel()
+        pendingSyncWorkItem = nil
+        
+        // Cancel all in-flight foreground session tasks
+        foregroundSession.getAllTasks { tasks in
+            for task in tasks {
+                task.cancel()
+            }
+        }
+        
+        // Cancel all in-flight background session tasks
+        session.getAllTasks { tasks in
+            for task in tasks {
+                task.cancel()
+            }
+        }
+        
+        // End background task if active
+        if observerBgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(observerBgTask)
+            observerBgTask = .invalid
+        }
+        
+        // Reset sync state
+        finishSync()
+        
+        // Reset cancellation flag so future syncs can proceed
+        syncLock.lock()
+        syncCancelled = false
+        syncLock.unlock()
+        
+        logMessage("🛑 Sync cancelled")
+    }
+    
     internal func syncType(_ type: HKSampleType, fullExport: Bool, completion: @escaping ()->Void) {
         let anchor = fullExport ? nil : loadAnchor(for: type)
         
@@ -941,13 +1038,13 @@ import Network
             let samples = samplesOrNil ?? []
             guard !samples.isEmpty else { completion(); return }
             
-            guard let token = self.accessToken, let endpoint = self.syncEndpoint else { 
+            guard let credential = self.authCredential, let endpoint = self.syncEndpoint else { 
                 completion()
                 return 
             }
 
             let payload = self.serialize(samples: samples, type: type)
-            self.enqueueBackgroundUpload(payload: payload, type: type, candidateAnchor: newAnchor, endpoint: endpoint, token: token) {
+            self.enqueueBackgroundUpload(payload: payload, type: type, candidateAnchor: newAnchor, endpoint: endpoint, credential: credential) {
                 if samples.count == self.chunkSize {
                     self.syncType(type, fullExport: false, completion: completion)
                 } else {
@@ -965,6 +1062,115 @@ import Network
         if let sink = logEventSink {
             DispatchQueue.main.async { [weak self] in
                 sink(message)
+            }
+        }
+    }
+    
+    // MARK: - Token Refresh
+    
+    /// Attempts to refresh the access token using the refresh token.
+    /// Calls `POST {host}/api/v1/token/refresh` with the current refresh token.
+    /// On success, saves the new tokens and calls completion with `true`.
+    /// On failure (or if no refresh token is available), calls completion with `false`.
+    internal func attemptTokenRefresh(completion: @escaping (Bool) -> Void) {
+        tokenRefreshLock.lock()
+        
+        // If already refreshing, queue the callback
+        if isRefreshingToken {
+            tokenRefreshCallbacks.append(completion)
+            tokenRefreshLock.unlock()
+            return
+        }
+        
+        guard let refreshToken = self.refreshToken, let base = self.apiBaseUrl else {
+            tokenRefreshLock.unlock()
+            logMessage("🔒 No refresh token or host - cannot refresh")
+            completion(false)
+            return
+        }
+        
+        isRefreshingToken = true
+        tokenRefreshCallbacks.append(completion)
+        tokenRefreshLock.unlock()
+        
+        guard let url = URL(string: "\(base)/token/refresh") else {
+            logMessage("❌ Invalid refresh URL")
+            finishTokenRefresh(success: false)
+            return
+        }
+        
+        logMessage("🔄 Attempting token refresh...")
+        
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: String] = ["refresh_token": refreshToken]
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
+            logMessage("❌ Failed to serialize refresh request body")
+            finishTokenRefresh(success: false)
+            return
+        }
+        req.httpBody = bodyData
+        
+        let task = foregroundSession.dataTask(with: req) { [weak self] data, response, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                self.logMessage("❌ Token refresh failed: \(error.localizedDescription)")
+                self.finishTokenRefresh(success: false)
+                return
+            }
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode),
+                  let data = data else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                self.logMessage("❌ Token refresh failed: HTTP \(statusCode)")
+                self.finishTokenRefresh(success: false)
+                return
+            }
+            
+            // Parse response: { "access_token": "...", "token_type": "bearer", "refresh_token": "...", "expires_in": 0 }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let newAccessToken = json["access_token"] as? String else {
+                self.logMessage("❌ Token refresh: invalid response body")
+                self.finishTokenRefresh(success: false)
+                return
+            }
+            
+            let newRefreshToken = json["refresh_token"] as? String
+            
+            // Save new tokens to Keychain
+            OpenWearablesHealthSdkKeychain.updateTokens(accessToken: newAccessToken, refreshToken: newRefreshToken)
+            
+            self.logMessage("✅ Token refreshed successfully")
+            self.finishTokenRefresh(success: true)
+        }
+        
+        task.resume()
+    }
+    
+    /// Resolves all pending token refresh callbacks
+    private func finishTokenRefresh(success: Bool) {
+        tokenRefreshLock.lock()
+        let callbacks = tokenRefreshCallbacks
+        tokenRefreshCallbacks = []
+        isRefreshingToken = false
+        tokenRefreshLock.unlock()
+        
+        for callback in callbacks {
+            callback(success)
+        }
+    }
+    
+    // MARK: - Auth Error Emission
+    internal func emitAuthError(statusCode: Int) {
+        logMessage("🔒 Auth error: HTTP \(statusCode) - token invalid")
+        
+        if let sink = authErrorEventSink {
+            DispatchQueue.main.async {
+                sink(["statusCode": statusCode, "message": "Unauthorized - please re-authenticate"])
             }
         }
     }
@@ -1085,6 +1291,54 @@ import Network
         wasDisconnected = false
     }
     
+    // MARK: - Protected Data Monitoring
+    
+    internal func startProtectedDataMonitoring() {
+        guard protectedDataObserver == nil else { return }
+        
+        protectedDataObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            self.logMessage("🔓 Device unlocked - protected data available")
+            
+            if self.pendingSyncAfterUnlock {
+                self.pendingSyncAfterUnlock = false
+                self.logMessage("🔄 Triggering deferred sync after unlock...")
+                
+                // Small delay to let the system stabilize
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    self.syncLock.lock()
+                    let alreadySyncing = self.isSyncing
+                    self.syncLock.unlock()
+                    
+                    guard !alreadySyncing else {
+                        self.logMessage("⏭️ Sync already in progress after unlock")
+                        return
+                    }
+                    
+                    self.syncAll(fullExport: false) {
+                        self.logMessage("✅ Deferred sync after unlock completed")
+                    }
+                }
+            }
+        }
+        
+        logMessage("🔐 Protected data monitoring started")
+    }
+    
+    internal func stopProtectedDataMonitoring() {
+        if let observer = protectedDataObserver {
+            NotificationCenter.default.removeObserver(observer)
+            protectedDataObserver = nil
+        }
+        pendingSyncAfterUnlock = false
+    }
+    
     /// Called when upload fails - marks network as disconnected so we can auto-resume
     internal func markNetworkError() {
         wasDisconnected = true
@@ -1113,16 +1367,26 @@ import Network
             }
             
             self.logMessage("🔄 Resuming sync after network restored...")
-            self.refreshTokenIfNeeded { success in
-                if success {
-                    self.syncAll(fullExport: false) {
-                        self.logMessage("✅ Network resume sync completed")
-                    }
-                } else {
-                    self.logMessage("⚠️ Token refresh failed")
-                }
+            self.syncAll(fullExport: false) {
+                self.logMessage("✅ Network resume sync completed")
             }
         }
+    }
+    
+    // MARK: - Protected Data Error Detection
+    
+    /// Checks if a HealthKit error is due to protected data being inaccessible (device locked).
+    /// HealthKit encrypts data independently of the general iOS data protection — even when
+    /// `UIApplication.shared.isProtectedDataAvailable` is true, HealthKit data may be locked.
+    internal func isProtectedDataError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        // HKError.errorDatabaseInaccessible (code 6) — HealthKit DB locked
+        if nsError.domain == "com.apple.healthkit" && nsError.code == 6 {
+            return true
+        }
+        // Fallback: match the localized description for older iOS versions
+        let msg = error.localizedDescription.lowercased()
+        return msg.contains("protected health data") || msg.contains("inaccessible")
     }
     
     // MARK: - FlutterStreamHandler
@@ -1142,6 +1406,25 @@ import Network
             .replacingOccurrences(of: "HKQuantityTypeIdentifier", with: "")
             .replacingOccurrences(of: "HKCategoryTypeIdentifier", with: "")
             .replacingOccurrences(of: "HKWorkoutType", with: "Workout")
+    }
+}
+
+// MARK: - Auth Error Stream Handler
+class AuthErrorStreamHandler: NSObject, FlutterStreamHandler {
+    weak var plugin: OpenWearablesHealthSdkPlugin?
+    
+    init(plugin: OpenWearablesHealthSdkPlugin) {
+        self.plugin = plugin
+    }
+    
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        plugin?.authErrorEventSink = events
+        return nil
+    }
+    
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        plugin?.authErrorEventSink = nil
+        return nil
     }
 }
 

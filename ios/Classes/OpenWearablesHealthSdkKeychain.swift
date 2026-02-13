@@ -9,15 +9,15 @@ internal class OpenWearablesHealthSdkKeychain {
     
     // MARK: - Keys
     private static let accessTokenKey = "accessToken"
+    private static let refreshTokenKey = "refreshToken"
     private static let userIdKey = "userId"
-    private static let appIdKey = "appId"
-    private static let appSecretKey = "appSecret"
-    private static let tokenExpiresAtKey = "tokenExpiresAt"
+    private static let apiKeyKey = "apiKey"
+    private static let baseUrlKey = "baseUrl"
+    private static let hostKey = "host"
     private static let customSyncUrlKey = "customSyncUrl"
     private static let syncActiveKey = "syncActive"
     private static let trackedTypesKey = "trackedTypes"
     private static let appInstalledKey = "appInstalled"
-    private static let baseUrlKey = "baseUrl"
     
     // MARK: - Fresh Install Detection
     
@@ -43,9 +43,14 @@ internal class OpenWearablesHealthSdkKeychain {
     
     // MARK: - Save Credentials
     
-    static func saveCredentials(userId: String, accessToken: String) {
+    static func saveCredentials(userId: String, accessToken: String? = nil, refreshToken: String? = nil) {
         save(key: userIdKey, value: userId)
-        save(key: accessTokenKey, value: accessToken)
+        if let accessToken = accessToken {
+            save(key: accessTokenKey, value: accessToken)
+        }
+        if let refreshToken = refreshToken {
+            save(key: refreshTokenKey, value: refreshToken)
+        }
     }
     
     // MARK: - Load Credentials
@@ -54,16 +59,44 @@ internal class OpenWearablesHealthSdkKeychain {
         return load(key: accessTokenKey)
     }
     
+    static func getRefreshToken() -> String? {
+        return load(key: refreshTokenKey)
+    }
+    
     static func getUserId() -> String? {
         return load(key: userIdKey)
     }
     
-    static func hasSession() -> Bool {
-        return getAccessToken() != nil && getUserId() != nil
+    // MARK: - Update Tokens (after refresh)
+    
+    static func updateTokens(accessToken: String, refreshToken: String?) {
+        save(key: accessTokenKey, value: accessToken)
+        if let refreshToken = refreshToken {
+            save(key: refreshTokenKey, value: refreshToken)
+        }
     }
     
-    // MARK: - Custom Sync URL (stored in UserDefaults, not sensitive)
+    static func hasSession() -> Bool {
+        guard getUserId() != nil else { return false }
+        return getAccessToken() != nil || getApiKey() != nil
+    }
     
+    // MARK: - Host (stored in UserDefaults, not sensitive)
+    
+    static func saveHost(_ host: String?) {
+        if let host = host {
+            defaults.set(host, forKey: hostKey)
+        } else {
+            defaults.removeObject(forKey: hostKey)
+        }
+        defaults.synchronize()
+    }
+    
+    static func getHost() -> String? {
+        return defaults.string(forKey: hostKey)
+    }
+    
+    // Legacy - kept for migration/cleanup
     static func saveCustomSyncUrl(_ url: String?) {
         if let url = url {
             defaults.set(url, forKey: customSyncUrlKey)
@@ -99,62 +132,27 @@ internal class OpenWearablesHealthSdkKeychain {
         return defaults.stringArray(forKey: trackedTypesKey)
     }
     
-    // MARK: - App Credentials (for token refresh)
+    // MARK: - API Key (alternative auth mode)
     
-    static func saveAppCredentials(appId: String, appSecret: String, baseUrl: String) {
-        save(key: appIdKey, value: appId)
-        save(key: appSecretKey, value: appSecret)
-        defaults.set(baseUrl, forKey: baseUrlKey)
-        defaults.synchronize()
+    static func saveApiKey(_ apiKey: String) {
+        save(key: apiKeyKey, value: apiKey)
     }
     
-    static func getAppId() -> String? {
-        return load(key: appIdKey)
-    }
-    
-    static func getAppSecret() -> String? {
-        return load(key: appSecretKey)
-    }
-    
-    static func getBaseUrl() -> String? {
-        return defaults.string(forKey: baseUrlKey)
-    }
-    
-    // MARK: - Token Expiry
-    
-    static func saveTokenExpiry(_ date: Date) {
-        defaults.set(date.timeIntervalSince1970, forKey: tokenExpiresAtKey)
-        defaults.synchronize()
-    }
-    
-    static func getTokenExpiry() -> Date? {
-        let timestamp = defaults.double(forKey: tokenExpiresAtKey)
-        guard timestamp > 0 else { return nil }
-        return Date(timeIntervalSince1970: timestamp)
-    }
-    
-    static func isTokenExpired() -> Bool {
-        guard let expiry = getTokenExpiry() else { return true }
-        // Consider expired if less than 5 minutes remaining
-        return Date().addingTimeInterval(5 * 60) > expiry
-    }
-    
-    static func hasRefreshCredentials() -> Bool {
-        return getAppId() != nil && getAppSecret() != nil && getBaseUrl() != nil && getUserId() != nil
+    static func getApiKey() -> String? {
+        return load(key: apiKeyKey)
     }
     
     // MARK: - Clear
     
     static func clearAll() {
         delete(key: accessTokenKey)
+        delete(key: refreshTokenKey)
         delete(key: userIdKey)
-        delete(key: appIdKey)
-        delete(key: appSecretKey)
+        delete(key: apiKeyKey)
+        defaults.removeObject(forKey: hostKey)
         defaults.removeObject(forKey: customSyncUrlKey)
         defaults.removeObject(forKey: syncActiveKey)
         defaults.removeObject(forKey: trackedTypesKey)
-        defaults.removeObject(forKey: tokenExpiresAtKey)
-        defaults.removeObject(forKey: baseUrlKey)
         defaults.synchronize()
     }
     

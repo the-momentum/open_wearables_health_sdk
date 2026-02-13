@@ -53,8 +53,8 @@ extension OpenWearablesHealthSdkPlugin {
             return
         }
         
-        guard syncEndpoint != nil, accessToken != nil else {
-            logMessage("❌ No endpoint or token")
+        guard syncEndpoint != nil, hasAuth else {
+            logMessage("❌ No endpoint or auth credential")
             completion(false)
             return
         }

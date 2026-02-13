@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
+import 'package:http/http.dart' as http;
 import 'package:open_wearables_health_sdk/health_data_type.dart';
+import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -79,9 +82,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _customUrlController = TextEditingController(text: 'https://api.openwearables.io/api/v1/');
-  final _userIdController = TextEditingController();
-  final _tokenController = TextEditingController();
+  final _hostController = TextEditingController();
+  final _invitationCodeController = TextEditingController();
 
   bool _isLoading = false;
   String _statusMessage = '';
@@ -102,13 +104,36 @@ class _HomePageState extends State<HomePage> {
       final timestamp = DateTime.now().toIso8601String().split('T').last.split('.').first;
       _addLog('$timestamp $message');
     });
+
+    // Handle auth errors (401) - sign out and redirect to login
+    MethodChannelOpenWearablesHealthSdk.authErrorStream.listen((error) {
+      final statusCode = error['statusCode'];
+      final message = error['message'] ?? 'Authentication error';
+      _addLog('🔒 Auth error: $statusCode - $message');
+      _handleAuthError();
+    });
+  }
+
+  Future<void> _handleAuthError() async {
+    // Sign out and reset state
+    try {
+      await OpenWearablesHealthSdk.signOut();
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _isSignedIn = false;
+        _isAuthorized = false;
+        _isSyncing = false;
+        _statusMessage = 'Session expired - please sign in again';
+      });
+    }
   }
 
   @override
   void dispose() {
-    _userIdController.dispose();
-    _tokenController.dispose();
-    _customUrlController.dispose();
+    _hostController.dispose();
+    _invitationCodeController.dispose();
     super.dispose();
   }
 
@@ -117,21 +142,20 @@ class _HomePageState extends State<HomePage> {
     try {
       final credentials = await OpenWearablesHealthSdk.getStoredCredentials();
       final hasUserId = credentials['userId'] != null && (credentials['userId'] as String).isNotEmpty;
-      final hasAccessToken = credentials['accessToken'] != null && (credentials['accessToken'] as String).isNotEmpty;
+      final hasAccessToken =
+          (credentials['accessToken'] != null && (credentials['accessToken'] as String).isNotEmpty) ||
+          (credentials['apiKey'] != null && (credentials['apiKey'] as String).isNotEmpty);
+      final hasHost = credentials['host'] != null && (credentials['host'] as String).isNotEmpty;
       final wasSyncActive = credentials['isSyncActive'] == true;
 
-      setState(() {
-        if (credentials['userId'] != null) {
-          _userIdController.text = credentials['userId'] as String;
-        }
-        if (credentials['accessToken'] != null) {
-          _tokenController.text = credentials['accessToken'] as String;
-        }
-      });
+      if (hasHost) {
+        setState(() {
+          _hostController.text = credentials['host'] as String;
+        });
+      }
 
-      if (hasUserId && hasAccessToken && wasSyncActive) {
-        final storedCustomUrl = credentials['customSyncUrl'] as String?;
-        await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: storedCustomUrl);
+      if (hasUserId && hasAccessToken && hasHost && wasSyncActive) {
+        await OpenWearablesHealthSdk.configure(host: credentials['host'] as String);
         _checkStatus();
         _setStatus('Session restored');
       }
@@ -142,38 +166,53 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _loginWithToken() async {
-    final userId = _userIdController.text.trim();
-    final token = _tokenController.text.trim();
-    final customUrl = _customUrlController.text.trim();
+  Future<void> _connectWithInvitationCode() async {
+    final host = _hostController.text.trim();
+    final invitationCode = _invitationCodeController.text.trim();
 
-    if (userId.isEmpty || token.isEmpty) {
-      _setStatus('Please fill User ID and Token');
+    if (host.isEmpty || invitationCode.isEmpty) {
+      _setStatus('Please fill Host and Invitation Code');
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      // If URL contains {user_id} placeholder, use it directly; otherwise treat as base URL ending with /api/v1/
-      final String fullSyncUrl;
-      if (customUrl.contains('{user_id}')) {
-        fullSyncUrl = customUrl;
-      } else {
-        final baseUrl = customUrl.isNotEmpty ? customUrl : 'https://api.openwearables.io/api/v1/';
-        // Remove trailing slash if present, then append path
-        final normalizedBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
-        fullSyncUrl = '$normalizedBase/sdk/users/{user_id}/sync/apple';
+      _setStatus('Redeeming invitation code...');
+
+      // Build redeem URL: {host}/api/v1/invitation-code/redeem
+      final h = host.endsWith('/') ? host.substring(0, host.length - 1) : host;
+      final redeemUrl = Uri.parse('$h/api/v1/invitation-code/redeem');
+
+      final response = await http.post(
+        redeemUrl,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'code': invitationCode}),
+      );
+
+      if (response.statusCode != 200) {
+        _setStatus('Redeem failed (${response.statusCode}): ${response.body}');
+        return;
       }
-      await OpenWearablesHealthSdk.configure(environment: OpenWearablesHealthSdkEnvironment.production, customSyncUrl: fullSyncUrl);
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final accessToken = data['access_token'] as String?;
+      final refreshToken = data['refresh_token'] as String?;
+      final userId = data['user_id'] as String?;
+
+      if (accessToken == null || refreshToken == null || userId == null) {
+        _setStatus('Invalid response from server');
+        return;
+      }
+
+      // Configure SDK with host
+      await OpenWearablesHealthSdk.configure(host: host);
       _checkStatus();
 
+      // Sign in with the received credentials
       _setStatus('Signing in...');
-      final authToken = token.startsWith('Bearer ') ? token : 'Bearer $token';
-      await OpenWearablesHealthSdk.signIn(
-        userId: userId,
-        accessToken: authToken,
-      );
+      final bearerToken = accessToken.startsWith('Bearer ') ? accessToken : 'Bearer $accessToken';
+      await OpenWearablesHealthSdk.signIn(userId: userId, accessToken: bearerToken, refreshToken: refreshToken);
 
       _setStatus('Connected successfully');
       _checkStatus();
@@ -207,7 +246,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _isAuthorized = false;
         _isSyncing = false;
-        _tokenController.clear();
+        _invitationCodeController.clear();
       });
     } catch (e) {
       _setStatus('Error: $e');
@@ -358,10 +397,9 @@ class _HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _isSignedIn
-                      ? 'Connected as ${_userIdController.text.length > 8 ? '${_userIdController.text.substring(0, 8)}...' : _userIdController.text}'
-                      : 'Not connected',
+                  _isSignedIn ? 'Connected to ${_hostController.text}' : 'Not connected',
                   style: TextStyle(fontSize: 15, color: Colors.grey[600], letterSpacing: -0.2),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -389,22 +427,24 @@ class _HomePageState extends State<HomePage> {
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey, letterSpacing: 0.5),
             ),
           ),
-          _buildTextField(controller: _userIdController, placeholder: 'User ID', icon: CupertinoIcons.person),
-          _buildDivider(),
           _buildTextField(
-            controller: _tokenController,
-            placeholder: 'Token',
-            icon: CupertinoIcons.lock,
-            obscureText: true,
+            controller: _hostController,
+            placeholder: 'Host (e.g. https://api.example.com)',
+            icon: CupertinoIcons.globe,
+            keyboardType: TextInputType.url,
           ),
           _buildDivider(),
-          _buildTextField(controller: _customUrlController, placeholder: 'API URL', icon: CupertinoIcons.link),
+          _buildTextField(
+            controller: _invitationCodeController,
+            placeholder: 'Invitation Code',
+            icon: CupertinoIcons.ticket,
+          ),
           Padding(
             padding: const EdgeInsets.all(20),
             child: SizedBox(
               width: double.infinity,
               child: CupertinoButton.filled(
-                onPressed: _isLoading ? null : _loginWithToken,
+                onPressed: _isLoading ? null : _connectWithInvitationCode,
                 borderRadius: BorderRadius.circular(12),
                 child: _isLoading
                     ? const CupertinoActivityIndicator(color: Colors.white)
@@ -422,6 +462,7 @@ class _HomePageState extends State<HomePage> {
     required String placeholder,
     required IconData icon,
     bool obscureText = false,
+    TextInputType? keyboardType,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -434,6 +475,8 @@ class _HomePageState extends State<HomePage> {
               controller: controller,
               placeholder: placeholder,
               obscureText: obscureText,
+              keyboardType: keyboardType,
+              autocorrect: false,
               padding: EdgeInsets.zero,
               decoration: const BoxDecoration(),
               style: const TextStyle(fontSize: 17),
