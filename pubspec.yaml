@@ -1,6 +1,6 @@
 name: open_wearables_health_sdk
 description: "Flutter SDK for secure background health data synchronization from Apple HealthKit (iOS) to the Open Wearables platform."
-version: 0.0.4
+version: 0.0.6
 homepage: https://openwearables.io
 repository: https://github.com/the-momentum/open_wearables_health_sdk
 issue_tracker: https://github.com/the-momentum/open_wearables_health_sdk/issues

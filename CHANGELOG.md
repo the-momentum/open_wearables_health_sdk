@@ -1,3 +1,11 @@
+## 0.0.6
+
+* Replaced `baseUrl` with required `host` parameter in SDK configuration
+* Added refresh token handling with automatic token renewal on 401 errors
+* Added invitation code flow support
+* Improved sync resilience and error handling
+* Removed `customSyncUrl` support
+
 ## 0.0.5
 
 * Fixed example app default sync URL to use correct `/api/v1/` base path
