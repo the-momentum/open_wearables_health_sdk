@@ -4,14 +4,17 @@ PODS:
     - Flutter
   - open_wearables_health_sdk (0.0.7):
     - Flutter
-    - OpenWearablesHealthSDK (~> 0.1.0)
-  - OpenWearablesHealthSDK (0.1.0)
+    - OpenWearablesHealthSDK (~> 0.2.0)
+  - OpenWearablesHealthSDK (0.2.0)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
   - open_wearables_health_sdk (from `.symlinks/plugins/open_wearables_health_sdk/ios`)
-  - OpenWearablesHealthSDK (from `https://github.com/kmlpiekarz/open_wearables_ios_sdk.git`, tag `0.1.0`)
+
+SPEC REPOS:
+  trunk:
+    - OpenWearablesHealthSDK
 
 EXTERNAL SOURCES:
   Flutter:
@@ -20,21 +23,13 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/integration_test/ios"
   open_wearables_health_sdk:
     :path: ".symlinks/plugins/open_wearables_health_sdk/ios"
-  OpenWearablesHealthSDK:
-    :git: https://github.com/kmlpiekarz/open_wearables_ios_sdk.git
-    :tag: 0.1.0
-
-CHECKOUT OPTIONS:
-  OpenWearablesHealthSDK:
-    :git: https://github.com/kmlpiekarz/open_wearables_ios_sdk.git
-    :tag: 0.1.0
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
-  open_wearables_health_sdk: 979888acdfba4d3106079138c3766d6c9a71afc5
-  OpenWearablesHealthSDK: b42e8bca0d724b8cf2b7263c089ac5f5306b152e
+  open_wearables_health_sdk: 92da127c4410891e2ce7d701377914428a421dc2
+  OpenWearablesHealthSDK: 42337fe46efd460631454ce17f5e374da72313ad
 
-PODFILE CHECKSUM: 57757bb08143c9d3b209ae1f6a8d299db2bd7410
+PODFILE CHECKSUM: 53a6aebc29ccee84c41f92f409fc20cd4ca011f1
 
 COCOAPODS: 1.16.2

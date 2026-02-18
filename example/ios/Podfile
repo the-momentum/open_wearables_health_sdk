@@ -30,9 +30,6 @@ flutter_ios_podfile_setup
 target 'Runner' do
   use_frameworks!
 
-  # Explicit source until CocoaPods CDN syncs (can remove once `pod search OpenWearablesHealthSDK` works)
-  pod 'OpenWearablesHealthSDK', :git => 'https://github.com/kmlpiekarz/open_wearables_ios_sdk.git', :tag => '0.1.0'
-
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

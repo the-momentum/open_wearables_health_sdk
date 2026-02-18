@@ -123,11 +123,12 @@ public class OpenWearablesHealthSdkPlugin: NSObject, FlutterPlugin, FlutterStrea
 
         case "requestAuthorization":
             guard let args = call.arguments as? [String: Any],
-                  let types = args["types"] as? [String] else {
+                  let typeStrings = args["types"] as? [String] else {
                 result(FlutterError(code: "bad_args", message: "Missing types", details: nil))
                 return
             }
-            sdk.requestAuthorization(types: types) { ok in
+            let healthTypes = typeStrings.compactMap { HealthDataType(rawValue: $0) }
+            sdk.requestAuthorization(types: healthTypes) { ok in
                 result(ok)
             }
 
