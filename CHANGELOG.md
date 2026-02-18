@@ -1,3 +1,10 @@
+## 0.0.7
+
+* **Breaking:** Replaced the embedded native iOS implementation with the [OpenWearablesHealthSDK](https://cocoapods.org/pods/OpenWearablesHealthSDK) CocoaPod (`~> 0.2.0`). The Flutter plugin is now a thin wrapper around the native iOS SDK.
+* All HealthKit logic (authorization, background sync, anchored queries, data serialization, keychain storage) is now handled by the native SDK.
+* Health data type authorization now uses the native `HealthDataType` enum instead of raw strings.
+* No changes to the public Dart API — existing Flutter integrations continue to work without modification.
+
 ## 0.0.6
 
 * Replaced `baseUrl` with required `host` parameter in SDK configuration
