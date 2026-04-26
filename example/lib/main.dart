@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:open_wearables_health_sdk/health_data_type.dart';
 import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 // Open Wearables design tokens
 class OWColors {
@@ -127,6 +129,15 @@ class _HomePageState extends State<HomePage> {
   final _customDaysController = TextEditingController();
   bool _isCustomDays = false;
 
+  // ── Sync progress tracking ────────────────────────────────────────
+  // Polled from native via getSyncStatus() every 2s while syncing so the
+  // user gets a live progress card with completed types / records sent /
+  // elapsed / ETA. Keeps the screen awake (configurable) while running.
+  Timer? _progressTimer;
+  Map<String, dynamic>? _syncStatus;
+  DateTime? _syncStartedAt;
+  bool _keepScreenAwake = true;
+
   // Provider selection (Android only)
   List<AvailableProvider> _availableProviders = [];
   String? _selectedProviderId;
@@ -194,6 +205,7 @@ class _HomePageState extends State<HomePage> {
         _isSyncing = false;
         _statusMessage = 'Session expired - please sign in again';
       });
+      _stopProgressTracking();
     }
   }
 
@@ -202,7 +214,55 @@ class _HomePageState extends State<HomePage> {
     _hostController.dispose();
     _invitationCodeController.dispose();
     _customDaysController.dispose();
+    _progressTimer?.cancel();
+    WakelockPlus.disable();
     super.dispose();
+  }
+
+  // ── Progress polling ──────────────────────────────────────────────
+
+  void _startProgressTracking() {
+    _syncStartedAt = DateTime.now();
+    _progressTimer?.cancel();
+    _pollSyncStatus(); // immediate first poll
+    _progressTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollSyncStatus());
+    if (_keepScreenAwake) {
+      WakelockPlus.enable();
+    }
+  }
+
+  void _stopProgressTracking() {
+    _progressTimer?.cancel();
+    _progressTimer = null;
+    WakelockPlus.disable();
+    if (mounted) {
+      setState(() {
+        _syncStatus = null;
+        _syncStartedAt = null;
+      });
+    }
+  }
+
+  Future<void> _pollSyncStatus() async {
+    try {
+      final status = await OpenWearablesHealthSdk.getSyncStatus();
+      final stillActive = OpenWearablesHealthSdk.isSyncActive;
+      if (!mounted) return;
+      setState(() {
+        _syncStatus = status;
+        if (!stillActive && _isSyncing) {
+          _isSyncing = false;
+        }
+      });
+      if (!stillActive) {
+        // Sync just finished — keep status visible briefly, then clean up.
+        _progressTimer?.cancel();
+        _progressTimer = null;
+        WakelockPlus.disable();
+      }
+    } catch (_) {
+      // Swallow errors — keep last known status visible.
+    }
   }
 
   Future<void> _autoConfigureOnStartup() async {
@@ -373,11 +433,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _checkStatus() {
+    final wasSyncing = _isSyncing;
     setState(() {
       _isSignedIn = OpenWearablesHealthSdk.isSignedIn;
       _isSyncing = OpenWearablesHealthSdk.isSyncActive;
       if (_isSyncing) _isAuthorized = true;
     });
+    // If we just discovered a sync is in flight (e.g. app reopened mid-sync),
+    // start the progress tracker so the UI catches up.
+    if (_isSyncing && !wasSyncing && _progressTimer == null) {
+      _startProgressTracking();
+    }
   }
 
   void _setStatus(String message) {
@@ -434,6 +500,9 @@ class _HomePageState extends State<HomePage> {
       final label = _syncDaysBack != null ? 'last $_syncDaysBack days' : 'full history';
       final started = await OpenWearablesHealthSdk.startBackgroundSync(syncDaysBack: _syncDaysBack);
       setState(() => _isSyncing = started);
+      if (started) {
+        _startProgressTracking();
+      }
       _setStatus(started ? 'Sync started ($label)' : 'Could not start sync');
       if (!started) {
         Sentry.captureEvent(
@@ -459,6 +528,7 @@ class _HomePageState extends State<HomePage> {
     try {
       await OpenWearablesHealthSdk.stopBackgroundSync();
       setState(() => _isSyncing = false);
+      _stopProgressTracking();
       _setStatus('Sync stopped');
     } catch (e, stackTrace) {
       _setStatus('Error: $e');
@@ -515,6 +585,11 @@ class _HomePageState extends State<HomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildStatusCard(),
+                  // Live progress card — only renders while syncing.
+                  if (_isSyncing) ...[
+                    const SizedBox(height: 16),
+                    _buildProgressCard(),
+                  ],
                   const SizedBox(height: 24),
 
                   if (!_isSignedIn) ...[
@@ -603,6 +678,155 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+  }
+
+  // ── Progress card ─────────────────────────────────────────────────
+  // Live progress while a backfill is running. Driven by getSyncStatus()
+  // polled every 2s. Shows: types completed bar (denominator =
+  // HealthDataType.values.length), records sent counter, elapsed timer,
+  // rough ETA, and a wakelock toggle.
+  Widget _buildProgressCard() {
+    final s = _syncStatus ?? const <String, dynamic>{};
+    final completedTypes = (s['completedTypes'] as int?) ?? 0;
+    final sentCount = (s['sentCount'] as int?) ?? 0;
+    final totalTypes = HealthDataType.values.length;
+    final progress = totalTypes > 0 ? (completedTypes / totalTypes).clamp(0.0, 1.0) : 0.0;
+    final percent = (progress * 100).toInt();
+
+    String? elapsedStr;
+    String? etaStr;
+    if (_syncStartedAt != null) {
+      final elapsed = DateTime.now().difference(_syncStartedAt!);
+      if (elapsed.inHours > 0) {
+        elapsedStr = '${elapsed.inHours}h ${elapsed.inMinutes % 60}m';
+      } else if (elapsed.inMinutes > 0) {
+        elapsedStr = '${elapsed.inMinutes}m ${elapsed.inSeconds % 60}s';
+      } else {
+        elapsedStr = '${elapsed.inSeconds}s';
+      }
+      if (elapsed.inSeconds > 5 && completedTypes > 0 && completedTypes < totalTypes) {
+        final ratePerSec = completedTypes / elapsed.inSeconds;
+        if (ratePerSec > 0) {
+          final remainSec = (totalTypes - completedTypes) / ratePerSec;
+          if (remainSec < 60) {
+            etaStr = '~${remainSec.toInt()}s left';
+          } else if (remainSec < 3600) {
+            etaStr = '~${(remainSec / 60).toInt()} min left';
+          } else {
+            etaStr = '~${(remainSec / 3600).toStringAsFixed(1)}h left';
+          }
+        }
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: OWColors.surface.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: OWColors.success.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(CupertinoIcons.arrow_down_circle_fill, color: OWColors.success, size: 22),
+              const SizedBox(width: 10),
+              const Text(
+                'Sync progress',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.3,
+                  color: OWColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '$percent%',
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: OWColors.success,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: OWColors.surfaceLight,
+              valueColor: const AlwaysStoppedAnimation(OWColors.success),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _statRow('Types complete', '$completedTypes / $totalTypes'),
+          _statRow('Records sent', _formatCount(sentCount)),
+          if (elapsedStr != null) _statRow('Elapsed', elapsedStr),
+          if (etaStr != null) _statRow('Remaining', etaStr),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: OWColors.borderSubtle),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              CupertinoSwitch(
+                value: _keepScreenAwake,
+                activeTrackColor: OWColors.success,
+                onChanged: (v) {
+                  setState(() => _keepScreenAwake = v);
+                  if (_isSyncing) {
+                    if (v) {
+                      WakelockPlus.enable();
+                    } else {
+                      WakelockPlus.disable();
+                    }
+                  }
+                },
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Keep screen awake while syncing',
+                  style: TextStyle(fontSize: 14, color: OWColors.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Text(label, style: const TextStyle(fontSize: 14, color: OWColors.textSecondary)),
+          const Spacer(),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 14,
+              color: OWColors.textPrimary,
+              fontWeight: FontWeight.w500,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatCount(int n) {
+    if (n < 1000) return '$n';
+    if (n < 1000000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '${(n / 1000000).toStringAsFixed(2)}M';
   }
 
   Widget _buildLoginSection() {
