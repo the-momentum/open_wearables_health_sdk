@@ -130,12 +130,24 @@ class _HomePageState extends State<HomePage> {
   bool _isCustomDays = false;
 
   // ── Sync progress tracking ────────────────────────────────────────
-  // Polled from native via getSyncStatus() every 2s while syncing so the
-  // user gets a live progress card with completed types / records sent /
-  // elapsed / ETA. Keeps the screen awake (configurable) while running.
-  Timer? _progressTimer;
-  Map<String, dynamic>? _syncStatus;
+  // Driven by parsing the native logStream (more robust than polling
+  // getSyncStatus, because the SDK clears the state file on completion +
+  // userKey mismatches can return nil mid-sync). The log lines we care
+  // about all flow through MethodChannelOpenWearablesHealthSdk.logStream
+  // and are already subscribed in _subscribeToNativeLogs.
+  //
+  // Parsed signals:
+  //   "Types to sync (N):"           → _totalTypes = N
+  //   "<TypeName>: complete (anchor"  → _completedTypes += 1
+  //   "Sending X KB, Y items"         → _recordsSent += Y
+  //   "Sync complete: X samples ..."  → final freeze
+  //   "Sync started"                  → reset counters, start timer
+  Timer? _progressTimer;          // only used to nudge UI repaints for ETA
   DateTime? _syncStartedAt;
+  int _totalTypes = 0;            // 0 until first log line tells us
+  int _completedTypes = 0;
+  int _recordsSent = 0;
+  bool _syncFinishedFlash = false; // true briefly after final "Sync complete"
   bool _keepScreenAwake = true;
 
   // Provider selection (Android only)
@@ -153,6 +165,9 @@ class _HomePageState extends State<HomePage> {
     MethodChannelOpenWearablesHealthSdk.logStream.listen((message) {
       final timestamp = DateTime.now().toIso8601String().split('T').last.split('.').first;
       _addLog('$timestamp $message');
+
+      // Parse progress signals from the native log stream.
+      _parseProgressFromLog(message);
 
       Sentry.addBreadcrumb(Breadcrumb(category: 'sdk.log', message: message, level: _sentryLevelFromLog(message)));
     });
@@ -219,49 +234,110 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  // ── Progress polling ──────────────────────────────────────────────
+  // ── Progress tracking (log-parser driven) ───────────────────────
 
   void _startProgressTracking() {
-    _syncStartedAt = DateTime.now();
+    setState(() {
+      _syncStartedAt = DateTime.now();
+      _totalTypes = 0;
+      _completedTypes = 0;
+      _recordsSent = 0;
+      _syncFinishedFlash = false;
+    });
     _progressTimer?.cancel();
-    _pollSyncStatus(); // immediate first poll
-    _progressTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollSyncStatus());
+    // Tick once a second purely so the elapsed/ETA strings refresh in UI.
+    _progressTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
     if (_keepScreenAwake) {
       WakelockPlus.enable();
     }
   }
 
-  void _stopProgressTracking() {
+  void _stopProgressTracking({bool keepFinalSnapshot = false}) {
     _progressTimer?.cancel();
     _progressTimer = null;
     WakelockPlus.disable();
-    if (mounted) {
+    if (mounted && !keepFinalSnapshot) {
       setState(() {
-        _syncStatus = null;
         _syncStartedAt = null;
+        _totalTypes = 0;
+        _completedTypes = 0;
+        _recordsSent = 0;
+        _syncFinishedFlash = false;
       });
     }
   }
 
-  Future<void> _pollSyncStatus() async {
-    try {
-      final status = await OpenWearablesHealthSdk.getSyncStatus();
-      final stillActive = OpenWearablesHealthSdk.isSyncActive;
-      if (!mounted) return;
-      setState(() {
-        _syncStatus = status;
-        if (!stillActive && _isSyncing) {
-          _isSyncing = false;
-        }
-      });
-      if (!stillActive) {
-        // Sync just finished — keep status visible briefly, then clean up.
-        _progressTimer?.cancel();
-        _progressTimer = null;
-        WakelockPlus.disable();
+  /// Parses one native log line for progress signals. Cheap regex matches —
+  /// runs on every log message so kept very tight.
+  void _parseProgressFromLog(String message) {
+    if (!_isSyncing && !_syncFinishedFlash) return;
+
+    // "Types to sync (N): TypeA, TypeB, ..."
+    final typesMatch = RegExp(r'Types to sync \((\d+)\)').firstMatch(message);
+    if (typesMatch != null) {
+      final n = int.tryParse(typesMatch.group(1) ?? '');
+      if (n != null && mounted) {
+        setState(() => _totalTypes = n);
       }
-    } catch (_) {
-      // Swallow errors — keep last known status visible.
+      return;
+    }
+
+    // "<TypeName>: complete (anchor captured)" — one type fully done.
+    if (message.contains('complete (anchor captured)')) {
+      if (mounted) {
+        setState(() => _completedTypes += 1);
+      }
+      return;
+    }
+
+    // "Sending X KB, Y items (...)" — chunk being POSTed.
+    final sendMatch = RegExp(r'Sending [\d.]+ KB, (\d+) items').firstMatch(message);
+    if (sendMatch != null) {
+      final n = int.tryParse(sendMatch.group(1) ?? '');
+      if (n != null && mounted) {
+        setState(() => _recordsSent += n);
+      }
+      return;
+    }
+
+    // "Sync complete: X samples across Y types" — final summary; freeze values.
+    final completeMatch = RegExp(r'Sync complete: (\d+) samples across (\d+) types').firstMatch(message);
+    if (completeMatch != null) {
+      final samples = int.tryParse(completeMatch.group(1) ?? '');
+      final types = int.tryParse(completeMatch.group(2) ?? '');
+      if (mounted) {
+        setState(() {
+          if (samples != null) _recordsSent = samples;
+          if (types != null) _completedTypes = types;
+          _syncFinishedFlash = true;
+        });
+        // Hold final snapshot visible for 30s, then auto-collapse.
+        Future.delayed(const Duration(seconds: 30), () {
+          if (mounted) {
+            setState(() => _syncFinishedFlash = false);
+            _stopProgressTracking();
+          }
+        });
+      }
+      return;
+    }
+
+    // "Sync started" — a new sync session began (e.g., observer-driven incremental).
+    if (message.contains('Sync started') && !_isSyncing) {
+      // SDK started a sync without explicit user action (background observer).
+      // Treat as new session — reset counters but keep tracking enabled.
+      if (mounted) {
+        setState(() {
+          _isSyncing = true;
+          _syncStartedAt = DateTime.now();
+          _totalTypes = 0;
+          _completedTypes = 0;
+          _recordsSent = 0;
+          _syncFinishedFlash = false;
+        });
+      }
     }
   }
 
@@ -585,8 +661,9 @@ class _HomePageState extends State<HomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildStatusCard(),
-                  // Live progress card — only renders while syncing.
-                  if (_isSyncing) ...[
+                  // Live progress card — renders while syncing AND for ~30s
+                  // after completion so the user sees the final tally.
+                  if (_isSyncing || _syncFinishedFlash) ...[
                     const SizedBox(height: 16),
                     _buildProgressCard(),
                   ],
@@ -681,16 +758,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ── Progress card ─────────────────────────────────────────────────
-  // Live progress while a backfill is running. Driven by getSyncStatus()
-  // polled every 2s. Shows: types completed bar (denominator =
-  // HealthDataType.values.length), records sent counter, elapsed timer,
-  // rough ETA, and a wakelock toggle.
+  // Live progress driven by parsing the native log stream. Robust to the
+  // SDK clearing its state file mid-flight + handles the streaming sync's
+  // multiple session boundaries (start → complete → re-start observer).
+  // Shows: completed-types bar, records-sent counter, elapsed timer,
+  // rough ETA, wakelock toggle.
   Widget _buildProgressCard() {
-    final s = _syncStatus ?? const <String, dynamic>{};
-    final completedTypes = (s['completedTypes'] as int?) ?? 0;
-    final sentCount = (s['sentCount'] as int?) ?? 0;
-    final totalTypes = HealthDataType.values.length;
-    final progress = totalTypes > 0 ? (completedTypes / totalTypes).clamp(0.0, 1.0) : 0.0;
+    final completedTypes = _completedTypes;
+    final sentCount = _recordsSent;
+    final totalTypes = _totalTypes > 0 ? _totalTypes : HealthDataType.values.length;
+    final progress = _syncFinishedFlash
+        ? 1.0
+        : (totalTypes > 0 ? (completedTypes / totalTypes).clamp(0.0, 1.0) : 0.0);
     final percent = (progress * 100).toInt();
 
     String? elapsedStr;
@@ -731,11 +810,15 @@ class _HomePageState extends State<HomePage> {
         children: [
           Row(
             children: [
-              const Icon(CupertinoIcons.arrow_down_circle_fill, color: OWColors.success, size: 22),
+              Icon(
+                _syncFinishedFlash ? CupertinoIcons.checkmark_circle_fill : CupertinoIcons.arrow_down_circle_fill,
+                color: OWColors.success,
+                size: 22,
+              ),
               const SizedBox(width: 10),
-              const Text(
-                'Sync progress',
-                style: TextStyle(
+              Text(
+                _syncFinishedFlash ? 'Sync complete' : 'Sync progress',
+                style: const TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w600,
                   letterSpacing: -0.3,
@@ -744,7 +827,7 @@ class _HomePageState extends State<HomePage> {
               ),
               const Spacer(),
               Text(
-                '$percent%',
+                _syncFinishedFlash ? '✓' : '$percent%',
                 style: const TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w600,
