@@ -308,6 +308,12 @@ class _HomePageState extends State<HomePage> {
       final samples = int.tryParse(completeMatch.group(1) ?? '');
       final types = int.tryParse(completeMatch.group(2) ?? '');
       if (mounted) {
+        // Stop the 1s UI tick immediately so elapsed timer freezes at the
+        // value it had at completion. Without this it would keep ticking
+        // forever (or for 30s) past the actual sync end.
+        _progressTimer?.cancel();
+        _progressTimer = null;
+        WakelockPlus.disable();
         setState(() {
           if (samples != null) _recordsSent = samples;
           if (types != null) _completedTypes = types;
