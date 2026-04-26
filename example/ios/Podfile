@@ -32,6 +32,15 @@ target 'Runner' do
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
+  # Override the CocoaPods-published OpenWearablesHealthSDK 0.13.0 binary
+  # with srirsiva's fork on the dietary-types branch. The published 0.13.0
+  # release predates the streaming sync-state writes we depend on for the
+  # live progress card, AND we need the Swift-side dietary type extension
+  # to actually compile in (CocoaPods binary is stock upstream).
+  pod 'OpenWearablesHealthSDK',
+      :git => 'https://github.com/srirsiva/open_wearables_ios_sdk.git',
+      :branch => 'feat/extended-dietary-types'
+
   target 'RunnerTests' do
     inherit! :search_paths
   end

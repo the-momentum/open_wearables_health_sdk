@@ -40,11 +40,19 @@ enum HealthDataType {
   bloodPressureSystolic,
   bloodPressureDiastolic,
   bloodPressure, // correlation
-  // Nutrition (examples)
+  // Nutrition
   dietaryEnergyConsumed,
   dietaryCarbohydrates,
   dietaryProtein,
   dietaryFatTotal,
+  dietaryFatSaturated,
+  dietaryFatMonounsaturated,
+  dietaryFatPolyunsaturated,
+  dietaryFiber,
+  dietarySugar,
+  dietarySodium,
+  dietaryCholesterol,
+  dietaryCaffeine,
   dietaryWater,
 
   // Sleep / mindfulness
@@ -145,6 +153,22 @@ extension HealthDataTypeId on HealthDataType {
         return 'dietaryProtein';
       case HealthDataType.dietaryFatTotal:
         return 'dietaryFatTotal';
+      case HealthDataType.dietaryFatSaturated:
+        return 'dietaryFatSaturated';
+      case HealthDataType.dietaryFatMonounsaturated:
+        return 'dietaryFatMonounsaturated';
+      case HealthDataType.dietaryFatPolyunsaturated:
+        return 'dietaryFatPolyunsaturated';
+      case HealthDataType.dietaryFiber:
+        return 'dietaryFiber';
+      case HealthDataType.dietarySugar:
+        return 'dietarySugar';
+      case HealthDataType.dietarySodium:
+        return 'dietarySodium';
+      case HealthDataType.dietaryCholesterol:
+        return 'dietaryCholesterol';
+      case HealthDataType.dietaryCaffeine:
+        return 'dietaryCaffeine';
       case HealthDataType.dietaryWater:
         return 'dietaryWater';
 

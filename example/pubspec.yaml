@@ -29,6 +29,9 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   http: ^1.6.0
+  # Keep iOS auto-lock disabled while a backfill is running so the user
+  # can leave the app foregrounded without the screen turning off.
+  wakelock_plus: ^1.2.10
 
 dev_dependencies:
   integration_test:
