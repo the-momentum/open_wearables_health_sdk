@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:open_wearables_health_sdk/health_data_type.dart';
@@ -11,6 +12,7 @@ import 'package:open_wearables_health_sdk/src/user.dart';
 
 import 'open_wearables_health_sdk_method_channel.dart';
 import 'open_wearables_health_sdk_platform_interface.dart';
+import 'src/redeem_result.dart';
 
 export 'package:open_wearables_health_sdk/src/config.dart';
 export 'package:open_wearables_health_sdk/src/exceptions.dart';
@@ -19,6 +21,7 @@ export 'package:open_wearables_health_sdk/src/provider.dart';
 export 'package:open_wearables_health_sdk/src/status.dart';
 export 'package:open_wearables_health_sdk/src/user.dart';
 export 'open_wearables_health_sdk_method_channel.dart';
+export 'src/redeem_result.dart';
 
 /// Ensure MethodChannel is the default implementation.
 /// This runs at library load time before any static methods can be called.
@@ -494,6 +497,47 @@ class OpenWearablesHealthSdk {
       _logSubscription?.cancel();
       _logSubscription = null;
     }
+  }
+
+  // MARK: - mTLS client certificate (Android KeyChain)
+
+  /// Prompts the user to pick a client certificate from the Android system
+  /// KeyChain. The selected alias is persisted; subsequent app launches
+  /// auto-install it on the SDK's HTTP client. Returns the chosen alias, or
+  /// null if cancelled. Returns null immediately on non-Android platforms.
+  static Future<String?> pickClientCertificate({String? hostHint}) {
+    if (!Platform.isAndroid) return Future.value(null);
+    return _platform.pickClientCertificate(hostHint: hostHint);
+  }
+
+  /// Returns the alias currently selected for mTLS, or null if none.
+  /// Returns null immediately on non-Android platforms.
+  static Future<String?> getClientCertificateAlias() {
+    if (!Platform.isAndroid) return Future.value(null);
+    return _platform.getClientCertificateAlias();
+  }
+
+  /// Forgets the currently selected client certificate alias.
+  /// No-op on non-Android platforms.
+  static Future<void> clearClientCertificate() {
+    if (!Platform.isAndroid) return Future.value();
+    return _platform.clearClientCertificate();
+  }
+
+  /// Redeems an invitation code through the SDK's native HTTP client, so the
+  /// configured client certificate (if any) is presented during the TLS
+  /// handshake. Use this instead of a Dart `http.post` when the backend is
+  /// behind mTLS — the cert lives in Android KeyChain and isn't accessible
+  /// from Dart's `dart:io` HttpClient. Throws [UnsupportedError] on
+  /// non-Android platforms.
+  static Future<RedeemResult> redeemInvitationCode({
+    required String host,
+    required String code,
+  }) {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError('redeemInvitationCode is only supported on Android');
+    }
+    return _platform.redeemInvitationCode(host: host, code: code);
   }
 
   // MARK: - Helpers

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      mTLS PKCS#12 keystore password. The native SDK reads this on initialize
+      to install a client cert at the OkHttp layer. Replace REPLACE_ME with
+      the password used when generating openwearables_client.p12.
+      Do NOT commit a real password to source control.
+    -->
+    <!--
+      Optional fallback: only used if you bundle an openwearables_client.p12
+      directly into the APK assets. The recommended path is to install the
+      cert via Android Settings → Security → Install certificate from
+      storage, then call OpenWearablesHealthSdk.pickClientCertificate() —
+      no APK rebuild needed for cert rotation. Leave as REPLACE_ME (or
+      remove this string entirely) to disable the assets fallback.
+    -->
+    <string name="openwearables_mtls_p12_password" translatable="false">REPLACE_ME</string>
+</resources>

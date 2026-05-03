@@ -178,7 +178,41 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
             "getAvailableProviders" -> result.success(s.getAvailableProviders())
             "setSyncNotification" -> handleSetSyncNotification(s, call, result)
             "setLogLevel" -> handleSetLogLevel(s, call, result)
+            "pickClientCertificate" -> handlePickClientCertificate(s, call, result)
+            "getClientCertificateAlias" -> result.success(s.getClientCertificateAlias())
+            "clearClientCertificate" -> { s.clearClientCertificate(); result.success(null) }
+            "redeemInvitationCode" -> handleRedeemInvitationCode(s, call, result)
             else -> result.notImplemented()
+        }
+    }
+
+    private fun handlePickClientCertificate(sdk: OpenWearablesHealthSDK, call: MethodCall, result: Result) {
+        val hostHint = call.argument<String>("hostHint")
+        var replied = false
+        sdk.pickClientCertificate(hostHint) { alias ->
+            // KeyChain may invoke the callback on a non-main thread; marshal back.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (!replied) {
+                    replied = true
+                    result.success(alias)
+                }
+            }
+        }
+    }
+
+    private fun handleRedeemInvitationCode(sdk: OpenWearablesHealthSDK, call: MethodCall, result: Result) {
+        val host = call.argument<String>("host")
+        val code = call.argument<String>("code")
+        if (host.isNullOrEmpty() || code.isNullOrEmpty()) {
+            result.error("bad_args", "host and code are required", null); return
+        }
+        scope.launch {
+            try {
+                val response = sdk.redeemInvitationCode(host, code)
+                result.success(response)
+            } catch (e: Exception) {
+                result.error("redeem_failed", e.message, null)
+            }
         }
     }
 

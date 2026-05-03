@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import 'open_wearables_health_sdk_platform_interface.dart';
 import 'src/exceptions.dart';
+import 'src/redeem_result.dart';
 
 /// MethodChannel-based implementation of the OpenWearablesHealthSdk platform interface.
 class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform {
@@ -179,5 +180,34 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
   @override
   Future<void> setLogLevel({required String level}) async {
     await _channel.invokeMethod<void>('setLogLevel', {'level': level});
+  }
+
+  @override
+  Future<String?> pickClientCertificate({String? hostHint}) async {
+    return _channel.invokeMethod<String?>('pickClientCertificate', {
+      if (hostHint != null) 'hostHint': hostHint,
+    });
+  }
+
+  @override
+  Future<String?> getClientCertificateAlias() async {
+    return _channel.invokeMethod<String?>('getClientCertificateAlias');
+  }
+
+  @override
+  Future<void> clearClientCertificate() async {
+    await _channel.invokeMethod<void>('clearClientCertificate');
+  }
+
+  @override
+  Future<RedeemResult> redeemInvitationCode({
+    required String host,
+    required String code,
+  }) async {
+    final result = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'redeemInvitationCode',
+      {'host': host, 'code': code},
+    );
+    return RedeemResult.fromMap(result ?? {});
   }
 }

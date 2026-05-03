@@ -1,9 +1,7 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:open_wearables_health_sdk/health_data_type.dart';
 import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -131,11 +129,48 @@ class _HomePageState extends State<HomePage> {
   List<AvailableProvider> _availableProviders = [];
   String? _selectedProviderId;
 
+  // Selected mTLS client cert alias (KeyChain). Null if none picked yet, or
+  // on iOS where this is unsupported.
+  String? _clientCertAlias;
+
   @override
   void initState() {
     super.initState();
     _subscribeToNativeLogs();
     _autoConfigureOnStartup();
+    _loadClientCertAlias();
+  }
+
+  Future<void> _loadClientCertAlias() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final alias = await OpenWearablesHealthSdk.getClientCertificateAlias();
+      if (mounted) setState(() => _clientCertAlias = alias);
+    } catch (_) {
+      // Method channel not yet attached or unsupported — leave null.
+    }
+  }
+
+  Future<void> _pickClientCert() async {
+    if (!Platform.isAndroid) return;
+    final hostHint = _hostController.text.trim().isEmpty
+        ? null
+        : Uri.tryParse(_hostController.text.trim())?.host;
+    final alias =
+        await OpenWearablesHealthSdk.pickClientCertificate(hostHint: hostHint);
+    if (!mounted) return;
+    setState(() => _clientCertAlias = alias);
+    _setStatus(alias == null
+        ? 'No certificate selected'
+        : 'Using certificate: $alias');
+  }
+
+  Future<void> _clearClientCert() async {
+    if (!Platform.isAndroid) return;
+    await OpenWearablesHealthSdk.clearClientCertificate();
+    if (!mounted) return;
+    setState(() => _clientCertAlias = null);
+    _setStatus('Cleared client certificate');
   }
 
   void _subscribeToNativeLogs() {
@@ -302,33 +337,34 @@ class _HomePageState extends State<HomePage> {
     try {
       _setStatus('Redeeming invitation code...');
 
-      // Build redeem URL: {host}/api/v1/invitation-code/redeem
-      final h = host.endsWith('/') ? host.substring(0, host.length - 1) : host;
-      final redeemUrl = Uri.parse('$h/api/v1/invitation-code/redeem');
-
-      final response = await http.post(
-        redeemUrl,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'code': invitationCode}),
+      // Goes through the native SDK's OkHttp client so the configured client
+      // certificate (KeyChain alias or assets fallback) is presented during
+      // the TLS handshake. This is required when the backend is behind mTLS.
+      final response = await OpenWearablesHealthSdk.redeemInvitationCode(
+        host: host,
+        code: invitationCode,
       );
 
-      if (response.statusCode != 200) {
-        _setStatus('Redeem failed (${response.statusCode}): ${response.body}');
+      final statusCode = response.statusCode;
+      final body = response.body;
+      final data = response.data;
+
+      if (statusCode != 200) {
+        _setStatus('Redeem failed ($statusCode): $body');
         Sentry.captureEvent(
           SentryEvent(
             message: SentryMessage('Invitation code redeem failed'),
             level: SentryLevel.warning,
-            tags: {'statusCode': '${response.statusCode}', 'host': host},
+            tags: {'statusCode': '$statusCode', 'host': host},
             contexts: Contexts()
               ..['response_details'] = {
-                'body': response.body.length > 500 ? response.body.substring(0, 500) : response.body,
+                'body': body.length > 500 ? body.substring(0, 500) : body,
               },
           ),
         );
         return;
       }
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
       final accessToken = data['access_token'] as String?;
       final refreshToken = data['refresh_token'] as String?;
       final userId = data['user_id'] as String?;
@@ -639,6 +675,39 @@ class _HomePageState extends State<HomePage> {
             placeholder: 'Invitation Code',
             icon: CupertinoIcons.ticket,
           ),
+          if (Platform.isAndroid) _buildDivider(),
+          if (Platform.isAndroid)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(CupertinoIcons.lock_shield,
+                      color: OWColors.textMuted, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _clientCertAlias == null
+                          ? 'No client certificate selected'
+                          : 'Cert: $_clientCertAlias',
+                      style: const TextStyle(
+                          color: OWColors.textSecondary, fontSize: 15),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _isLoading ? null : _pickClientCert,
+                    child: Text(
+                      _clientCertAlias == null ? 'Select' : 'Change',
+                    ),
+                  ),
+                  if (_clientCertAlias != null)
+                    TextButton(
+                      onPressed: _isLoading ? null : _clearClientCert,
+                      child: const Text('Clear'),
+                    ),
+                ],
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(20),
             child: SizedBox(

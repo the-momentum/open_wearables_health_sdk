@@ -16,6 +16,7 @@ buildscript {
 
 rootProject.allprojects {
     repositories {
+        mavenLocal()
         maven {
             url = uri("https://jitpack.io")
         }
@@ -49,7 +50,7 @@ android {
     }
 
     dependencies {
-        implementation("com.github.the-momentum.open_wearables_android_sdk:sdk:v0.10.0")
+        implementation("com.openwearables.health:sdk:0.11.0")
 
         // Testing
         testImplementation("org.jetbrains.kotlin:kotlin-test")
