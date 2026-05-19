@@ -14,8 +14,20 @@ buildscript {
     }
 }
 
+// Capture THIS plugin's libs/maven path here, before the closure below evaluates
+// per-subproject (where `project.projectDir` would resolve to the consuming app's
+// dir, not ours).
+def owSdkPluginLibsMaven = "${project.projectDir}/libs/maven"
+
 rootProject.allprojects {
     repositories {
+        // Local Maven repo bundled with this fork — contains the patched
+        // Tamulus47/open_wearables_android_sdk@v0.11.1 (with @JvmName fix
+        // for the setLogLevel platform-declaration clash) plus the Samsung
+        // Health Data SDK. See README-PATCH.md for build details.
+        maven {
+            url = uri(owSdkPluginLibsMaven)
+        }
         maven {
             url = uri("https://jitpack.io")
         }
@@ -49,7 +61,8 @@ android {
     }
 
     dependencies {
-        implementation("com.github.the-momentum.open_wearables_android_sdk:sdk:v0.10.0")
+        // Patched fork of v0.11.1 — bundled in libs/maven (see README-PATCH.md).
+        implementation("com.openwearables.health:sdk:0.11.1")
 
         // Testing
         testImplementation("org.jetbrains.kotlin:kotlin-test")
