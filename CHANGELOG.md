@@ -1,3 +1,8 @@
+## Unreleased
+
+* Added separate Health Connect history-read and background-read authorization methods. Metric authorization remains independent of both optional permissions.
+* Temporarily pinned the Android dependency to the matching fork commit pending upstream Android SDK PR #21.
+
 ## 0.0.20
 
 * Bumped native iOS SDK dependency from `~> 0.12.0` to `~> 0.13.0`.

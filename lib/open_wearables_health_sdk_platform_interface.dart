@@ -6,7 +6,8 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   static final Object _token = Object();
 
-  static OpenWearablesHealthSdkPlatform _instance = _NoopOpenWearablesHealthSdkPlatform();
+  static OpenWearablesHealthSdkPlatform _instance =
+      _NoopOpenWearablesHealthSdkPlatform();
 
   static OpenWearablesHealthSdkPlatform get instance => _instance;
 
@@ -75,7 +76,25 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   /// Requests authorization from HealthKit/Health Connect.
   Future<bool> requestAuthorization({required List<String> types}) {
-    throw UnimplementedError('requestAuthorization() has not been implemented.');
+    throw UnimplementedError(
+      'requestAuthorization() has not been implemented.',
+    );
+  }
+
+  /// Requests optional Android access to health data while the app is in the background.
+  /// Returns false on platforms or providers that do not expose this permission.
+  Future<bool> requestBackgroundReadAuthorization() {
+    throw UnimplementedError(
+      'requestBackgroundReadAuthorization() has not been implemented.',
+    );
+  }
+
+  /// Requests optional Android access to data older than Health Connect's default window.
+  /// Returns false on platforms or providers that do not expose this permission.
+  Future<bool> requestHistoryReadAuthorization() {
+    throw UnimplementedError(
+      'requestHistoryReadAuthorization() has not been implemented.',
+    );
   }
 
   // MARK: - Sync Operations
@@ -101,7 +120,9 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 
   /// Returns stored credentials for debugging/display purposes.
   Future<Map<String, dynamic>> getStoredCredentials() {
-    throw UnimplementedError('getStoredCredentials() has not been implemented.');
+    throw UnimplementedError(
+      'getStoredCredentials() has not been implemented.',
+    );
   }
 
   /// Returns the current sync session status.
@@ -143,7 +164,9 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
   /// On iOS, this always returns an empty list (HealthKit is implicit).
   /// On Android, returns providers that are installed and meet requirements.
   Future<List<Map<String, dynamic>>> getAvailableProviders() {
-    throw UnimplementedError('getAvailableProviders() has not been implemented.');
+    throw UnimplementedError(
+      'getAvailableProviders() has not been implemented.',
+    );
   }
 
   // MARK: - Notification
@@ -168,4 +191,5 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
 }
 
 /// NO-OP placeholder.
-class _NoopOpenWearablesHealthSdkPlatform extends OpenWearablesHealthSdkPlatform {}
+class _NoopOpenWearablesHealthSdkPlatform
+    extends OpenWearablesHealthSdkPlatform {}

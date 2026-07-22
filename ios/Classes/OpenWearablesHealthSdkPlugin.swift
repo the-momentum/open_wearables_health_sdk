@@ -132,6 +132,10 @@ public class OpenWearablesHealthSdkPlugin: NSObject, FlutterPlugin, FlutterStrea
                 result(ok)
             }
 
+        case "requestBackgroundReadAuthorization", "requestHistoryReadAuthorization":
+            // These are Health Connect-specific optional permissions.
+            result(false)
+
         case "syncNow":
             sdk.syncNow { result(nil) }
 

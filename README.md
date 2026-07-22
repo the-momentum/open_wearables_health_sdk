@@ -224,6 +224,13 @@ final authorized = await OpenWearablesHealthSdk.requestAuthorization(
     HealthDataType.workout,
   ],
 );
+
+// Health Connect only: request optional access separately.
+// Foreground/manual sync still works if either request returns false.
+final historyAuthorized =
+    await OpenWearablesHealthSdk.requestHistoryReadAuthorization();
+final backgroundAuthorized =
+    await OpenWearablesHealthSdk.requestBackgroundReadAuthorization();
 ```
 
 ### 5. Start Background Sync

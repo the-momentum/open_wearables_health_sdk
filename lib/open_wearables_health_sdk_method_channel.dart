@@ -6,13 +6,21 @@ import 'open_wearables_health_sdk_platform_interface.dart';
 import 'src/exceptions.dart';
 
 /// MethodChannel-based implementation of the OpenWearablesHealthSdk platform interface.
-class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform {
-  static const MethodChannel _channel = MethodChannel('open_wearables_health_sdk');
-  static const EventChannel _logChannel = EventChannel('open_wearables_health_sdk/logs');
-  static const EventChannel _authErrorChannel = EventChannel('open_wearables_health_sdk/auth_errors');
+class MethodChannelOpenWearablesHealthSdk
+    extends OpenWearablesHealthSdkPlatform {
+  static const MethodChannel _channel = MethodChannel(
+    'open_wearables_health_sdk',
+  );
+  static const EventChannel _logChannel = EventChannel(
+    'open_wearables_health_sdk/logs',
+  );
+  static const EventChannel _authErrorChannel = EventChannel(
+    'open_wearables_health_sdk/auth_errors',
+  );
 
   static final StreamController<String> _logController = _createLogController();
-  static final StreamController<Map<String, dynamic>> _authErrorController = _createAuthErrorController();
+  static final StreamController<Map<String, dynamic>> _authErrorController =
+      _createAuthErrorController();
 
   static StreamController<String> _createLogController() {
     final controller = StreamController<String>.broadcast();
@@ -25,16 +33,13 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
 
   static StreamController<Map<String, dynamic>> _createAuthErrorController() {
     final controller = StreamController<Map<String, dynamic>>.broadcast();
-    _authErrorChannel.receiveBroadcastStream().listen(
-      (event) {
-        if (event is Map) {
-          controller.add(Map<String, dynamic>.from(event));
-        } else {
-          controller.add({'statusCode': 401, 'message': 'Authentication error'});
-        }
-      },
-      onError: (error) => controller.addError(error),
-    );
+    _authErrorChannel.receiveBroadcastStream().listen((event) {
+      if (event is Map) {
+        controller.add(Map<String, dynamic>.from(event));
+      } else {
+        controller.add({'statusCode': 401, 'message': 'Authentication error'});
+      }
+    }, onError: (error) => controller.addError(error));
     return controller;
   }
 
@@ -44,13 +49,12 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
 
   /// Stream of authentication errors (e.g., 401 Unauthorized).
   /// Multiple listeners can subscribe simultaneously.
-  static Stream<Map<String, dynamic>> get authErrorStream => _authErrorController.stream;
+  static Stream<Map<String, dynamic>> get authErrorStream =>
+      _authErrorController.stream;
 
   @override
   Future<bool> configure({required String host}) async {
-    await _channel.invokeMethod<void>('configure', {
-      'host': host,
-    });
+    await _channel.invokeMethod<void>('configure', {'host': host});
 
     // Check if sync was auto-restored by querying isSyncActive
     final isSyncActive = await _channel.invokeMethod<bool>('isSyncActive');
@@ -72,7 +76,10 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
         if (apiKey != null) 'apiKey': apiKey,
       });
     } on PlatformException catch (e) {
-      throw SignInException(e.message ?? 'Sign-in failed', statusCode: int.tryParse(e.code));
+      throw SignInException(
+        e.message ?? 'Sign-in failed',
+        statusCode: int.tryParse(e.code),
+      );
     }
   }
 
@@ -100,7 +107,25 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
 
   @override
   Future<bool> requestAuthorization({required List<String> types}) async {
-    final result = await _channel.invokeMethod<bool>('requestAuthorization', {'types': types});
+    final result = await _channel.invokeMethod<bool>('requestAuthorization', {
+      'types': types,
+    });
+    return result == true;
+  }
+
+  @override
+  Future<bool> requestBackgroundReadAuthorization() async {
+    final result = await _channel.invokeMethod<bool>(
+      'requestBackgroundReadAuthorization',
+    );
+    return result == true;
+  }
+
+  @override
+  Future<bool> requestHistoryReadAuthorization() async {
+    final result = await _channel.invokeMethod<bool>(
+      'requestHistoryReadAuthorization',
+    );
     return result == true;
   }
 
@@ -129,14 +154,18 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
 
   @override
   Future<Map<String, dynamic>> getStoredCredentials() async {
-    final result = await _channel.invokeMethod<Map<Object?, Object?>>('getStoredCredentials');
+    final result = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'getStoredCredentials',
+    );
     if (result == null) return {};
     return result.map((key, value) => MapEntry(key as String, value));
   }
 
   @override
   Future<Map<String, dynamic>> getSyncStatus() async {
-    final result = await _channel.invokeMethod<Map<Object?, Object?>>('getSyncStatus');
+    final result = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'getSyncStatus',
+    );
     if (result == null) return {};
     return result.map((key, value) => MapEntry(key as String, value));
   }
@@ -153,14 +182,14 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
 
   @override
   Future<void> setProvider({required String providerId}) async {
-    await _channel.invokeMethod<void>('setProvider', {
-      'provider': providerId,
-    });
+    await _channel.invokeMethod<void>('setProvider', {'provider': providerId});
   }
 
   @override
   Future<List<Map<String, dynamic>>> getAvailableProviders() async {
-    final result = await _channel.invokeMethod<List<Object?>>('getAvailableProviders');
+    final result = await _channel.invokeMethod<List<Object?>>(
+      'getAvailableProviders',
+    );
     if (result == null) return [];
     return result
         .whereType<Map<Object?, Object?>>()

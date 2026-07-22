@@ -167,6 +167,12 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
             "updateTokens" -> handleUpdateTokens(s, call, result)
             "getStoredCredentials" -> result.success(s.getStoredCredentials())
             "requestAuthorization" -> handleRequestAuthorization(s, call, result)
+            "requestBackgroundReadAuthorization" -> handleOptionalAuthorization(result) {
+                s.requestBackgroundReadAuthorization()
+            }
+            "requestHistoryReadAuthorization" -> handleOptionalAuthorization(result) {
+                s.requestHistoryReadAuthorization()
+            }
             "startBackgroundSync" -> handleStartBackgroundSync(s, call, result)
             "stopBackgroundSync" -> handleStopBackgroundSync(s, result)
             "syncNow" -> handleSyncNow(s, result)
@@ -243,6 +249,16 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
             try {
                 val authorized = sdk.requestAuthorization(types)
                 result.success(authorized)
+            } catch (e: Exception) {
+                result.error("auth_failed", e.message, null)
+            }
+        }
+    }
+
+    private fun handleOptionalAuthorization(result: Result, request: suspend () -> Boolean) {
+        scope.launch {
+            try {
+                result.success(request())
             } catch (e: Exception) {
                 result.error("auth_failed", e.message, null)
             }

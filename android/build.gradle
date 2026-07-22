@@ -49,7 +49,9 @@ android {
     }
 
     dependencies {
-        implementation("com.github.the-momentum.open_wearables_android_sdk:sdk:v0.10.0")
+        // Temporary fork pin for the history/background permission API.
+        // Replace with the upstream release that includes open_wearables_android_sdk#21.
+        implementation("com.github.y3l1n4ung.open_wearables_android_sdk:sdk:93953bf2710cc7c01103d6c03dda67c076be84dd")
 
         // Testing
         testImplementation("org.jetbrains.kotlin:kotlin-test")

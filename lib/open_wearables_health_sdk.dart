@@ -23,7 +23,8 @@ export 'open_wearables_health_sdk_method_channel.dart';
 /// Ensure MethodChannel is the default implementation.
 /// This runs at library load time before any static methods can be called.
 final OpenWearablesHealthSdkPlatform _platform = (() {
-  OpenWearablesHealthSdkPlatform.instance = MethodChannelOpenWearablesHealthSdk();
+  OpenWearablesHealthSdkPlatform.instance =
+      MethodChannelOpenWearablesHealthSdk();
   return OpenWearablesHealthSdkPlatform.instance;
 })();
 
@@ -87,9 +88,7 @@ class OpenWearablesHealthSdk {
   ///   print('Welcome back!');
   /// }
   /// ```
-  static Future<void> configure({
-    required String host,
-  }) async {
+  static Future<void> configure({required String host}) async {
     _config = OpenWearablesHealthSdkConfig(host: host);
 
     _updateLogSubscription();
@@ -181,7 +180,9 @@ class OpenWearablesHealthSdk {
     final hasApiKey = apiKey != null;
 
     if (!hasTokens && !hasApiKey) {
-      throw ArgumentError('You must provide either (accessToken + refreshToken) or (apiKey).');
+      throw ArgumentError(
+        'You must provide either (accessToken + refreshToken) or (apiKey).',
+      );
     }
 
     await _platform.signIn(
@@ -262,9 +263,33 @@ class OpenWearablesHealthSdk {
   /// Returns true if authorization was successful, false otherwise.
   ///
   /// Throws [NotSignedInException] if no user is signed in.
-  static Future<bool> requestAuthorization({required List<HealthDataType> types}) async {
+  static Future<bool> requestAuthorization({
+    required List<HealthDataType> types,
+  }) async {
     _ensureSignedIn();
-    return _platform.requestAuthorization(types: types.map((e) => e.id).toList(growable: false));
+    return _platform.requestAuthorization(
+      types: types.map((e) => e.id).toList(growable: false),
+    );
+  }
+
+  /// Requests optional Health Connect background-read access on Android.
+  ///
+  /// Call this separately after metric authorization. A `false` result means
+  /// the permission is unavailable or denied; foreground/manual sync remains usable.
+  /// Returns `false` on iOS and for Android providers without this permission.
+  static Future<bool> requestBackgroundReadAuthorization() async {
+    _ensureSignedIn();
+    return _platform.requestBackgroundReadAuthorization();
+  }
+
+  /// Requests optional access to Health Connect data older than its default window.
+  ///
+  /// Call this separately before importing extended history. A `false` result means
+  /// the permission is unavailable or denied; the default history window remains usable.
+  /// Returns `false` on iOS and for Android providers without this permission.
+  static Future<bool> requestHistoryReadAuthorization() async {
+    _ensureSignedIn();
+    return _platform.requestHistoryReadAuthorization();
   }
 
   // MARK: - Sync Operations
@@ -299,7 +324,9 @@ class OpenWearablesHealthSdk {
   /// ```
   static Future<bool> startBackgroundSync({int? syncDaysBack}) async {
     _ensureSignedIn();
-    final started = await _platform.startBackgroundSync(syncDaysBack: syncDaysBack);
+    final started = await _platform.startBackgroundSync(
+      syncDaysBack: syncDaysBack,
+    );
     if (started) {
       _isSyncActive = true;
     }
