@@ -29,6 +29,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   http: ^1.6.0
+  wakelock_plus: ^1.7.0
 
 dev_dependencies:
   integration_test:

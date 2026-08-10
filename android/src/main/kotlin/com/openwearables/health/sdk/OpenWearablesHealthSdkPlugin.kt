@@ -169,7 +169,6 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
             "requestAuthorization" -> handleRequestAuthorization(s, call, result)
             "startBackgroundSync" -> handleStartBackgroundSync(s, call, result)
             "stopBackgroundSync" -> handleStopBackgroundSync(s, result)
-            "syncNow" -> handleSyncNow(s, result)
             "resetAnchors" -> handleResetAnchors(s, result)
             "getSyncStatus" -> result.success(s.getSyncStatus())
             "resumeSync" -> handleResumeSync(s, result)
@@ -274,17 +273,6 @@ class OpenWearablesHealthSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityA
         scope.launch {
             sdk.stopBackgroundSync()
             result.success(null)
-        }
-    }
-
-    private fun handleSyncNow(sdk: OpenWearablesHealthSDK, result: Result) {
-        scope.launch {
-            try {
-                sdk.syncNow()
-                result.success(null)
-            } catch (e: Exception) {
-                result.error("sync_failed", e.message, null)
-            }
         }
     }
 

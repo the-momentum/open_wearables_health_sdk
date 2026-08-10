@@ -315,17 +315,6 @@ class OpenWearablesHealthSdk {
     _isSyncActive = false;
   }
 
-  /// Manually triggers an incremental sync.
-  ///
-  /// This will sync any new health data since the last sync.
-  /// Useful for forcing a sync when the app is in the foreground.
-  ///
-  /// Throws [NotSignedInException] if no user is signed in.
-  static Future<void> syncNow() async {
-    _ensureSignedIn();
-    await _platform.syncNow();
-  }
-
   /// Resets all sync anchors and forces a full re-export on next sync.
   ///
   /// Use this to re-sync all historical data. The next sync will
@@ -355,6 +344,10 @@ class OpenWearablesHealthSdk {
   /// - `hasResumableSession`: bool - whether there's an interrupted sync
   /// - `sentCount`: int - number of records already sent in this session
   /// - `isFullExport`: bool - whether this is a full export or incremental
+  /// - `initialExportDone`: bool (iOS) - whether the initial historical export
+  ///   (full history, newest-first) has ever completed for this user. While
+  ///   false, apps should encourage keeping the app open in the foreground.
+  /// - `isSyncing`: bool (iOS) - whether a sync pass is running right now
   /// - `createdAt`: String? - ISO8601 timestamp when sync started
   ///
   /// ```dart

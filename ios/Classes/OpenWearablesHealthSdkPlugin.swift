@@ -132,9 +132,6 @@ public class OpenWearablesHealthSdkPlugin: NSObject, FlutterPlugin, FlutterStrea
                 result(ok)
             }
 
-        case "syncNow":
-            sdk.syncNow { result(nil) }
-
         case "startBackgroundSync":
             guard sdk.isSessionValid else {
                 result(FlutterError(code: "not_signed_in", message: "Not signed in", details: nil))

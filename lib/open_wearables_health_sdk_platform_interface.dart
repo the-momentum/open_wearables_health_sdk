@@ -87,10 +87,6 @@ abstract class OpenWearablesHealthSdkPlatform extends PlatformInterface {
     throw UnimplementedError('startBackgroundSync() has not been implemented.');
   }
 
-  Future<void> syncNow() {
-    throw UnimplementedError('syncNow() has not been implemented.');
-  }
-
   Future<void> stopBackgroundSync() {
     throw UnimplementedError('stopBackgroundSync() has not been implemented.');
   }
