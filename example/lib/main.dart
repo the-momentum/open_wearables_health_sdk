@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:open_wearables_health_sdk/health_data_type.dart';
 import 'package:open_wearables_health_sdk/open_wearables_health_sdk.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 // Open Wearables design tokens
 class OWColors {
@@ -131,11 +133,54 @@ class _HomePageState extends State<HomePage> {
   List<AvailableProvider> _availableProviders = [];
   String? _selectedProviderId;
 
+  // Historical (initial full export) sync tracking
+  Timer? _syncStatusTimer;
+  bool _historicalSyncInProgress = false;
+  int _historicalSentCount = 0;
+
   @override
   void initState() {
     super.initState();
     _subscribeToNativeLogs();
     _autoConfigureOnStartup();
+    _syncStatusTimer = Timer.periodic(const Duration(seconds: 3), (_) => _refreshHistoricalSyncStatus());
+  }
+
+  /// Polls the SDK to detect whether the initial historical export (full
+  /// history, newest-first) is still in progress. While it is, the screen is
+  /// kept awake so iOS doesn't suspend the app mid-sync.
+  Future<void> _refreshHistoricalSyncStatus() async {
+    if (!_isSyncing) {
+      await _setHistoricalSyncInProgress(false, 0);
+      return;
+    }
+    try {
+      final status = await OpenWearablesHealthSdk.getSyncStatus();
+      // Key is present on iOS only; on Android `null != false` keeps this off.
+      final inProgress = status['initialExportDone'] == false;
+      final sentCount = (status['sentCount'] as int?) ?? 0;
+      await _setHistoricalSyncInProgress(inProgress, sentCount);
+    } catch (e) {
+      debugPrint('Failed to refresh sync status: $e');
+    }
+  }
+
+  Future<void> _setHistoricalSyncInProgress(bool inProgress, int sentCount) async {
+    if (inProgress != _historicalSyncInProgress || sentCount != _historicalSentCount) {
+      setState(() {
+        _historicalSyncInProgress = inProgress;
+        _historicalSentCount = sentCount;
+      });
+    }
+    try {
+      if (inProgress) {
+        await WakelockPlus.enable();
+      } else {
+        await WakelockPlus.disable();
+      }
+    } catch (e) {
+      debugPrint('Wakelock error: $e');
+    }
   }
 
   void _subscribeToNativeLogs() {
@@ -199,6 +244,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _syncStatusTimer?.cancel();
+    WakelockPlus.disable();
     _hostController.dispose();
     _invitationCodeController.dispose();
     _customDaysController.dispose();
@@ -435,6 +482,7 @@ class _HomePageState extends State<HomePage> {
       final started = await OpenWearablesHealthSdk.startBackgroundSync(syncDaysBack: _syncDaysBack);
       setState(() => _isSyncing = started);
       _setStatus(started ? 'Sync started ($label)' : 'Could not start sync');
+      if (started) _refreshHistoricalSyncStatus();
       if (!started) {
         Sentry.captureEvent(
           SentryEvent(
@@ -459,25 +507,11 @@ class _HomePageState extends State<HomePage> {
     try {
       await OpenWearablesHealthSdk.stopBackgroundSync();
       setState(() => _isSyncing = false);
+      await _setHistoricalSyncInProgress(false, 0);
       _setStatus('Sync stopped');
     } catch (e, stackTrace) {
       _setStatus('Error: $e');
       Sentry.captureException(e, stackTrace: stackTrace, hint: Hint.withMap({'operation': 'stopBackgroundSync'}));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _syncNow() async {
-    setState(() => _isLoading = true);
-    try {
-      await OpenWearablesHealthSdk.syncNow();
-      _setStatus('Sync triggered');
-    } on NotSignedInException {
-      _setStatus('Sign in first');
-    } catch (e, stackTrace) {
-      _setStatus('Error: $e');
-      Sentry.captureException(e, stackTrace: stackTrace, hint: Hint.withMap({'operation': 'syncNow'}));
     } finally {
       setState(() => _isLoading = false);
     }
@@ -515,6 +549,10 @@ class _HomePageState extends State<HomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildStatusCard(),
+                  if (_isSyncing && _historicalSyncInProgress) ...[
+                    const SizedBox(height: 12),
+                    _buildHistoricalSyncBanner(),
+                  ],
                   const SizedBox(height: 24),
 
                   if (!_isSignedIn) ...[
@@ -603,6 +641,61 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+  }
+
+  Widget _buildHistoricalSyncBanner() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: OWColors.accentIndigo.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: OWColors.accentIndigo.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: CupertinoActivityIndicator(color: OWColors.accentIndigo),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Historical data sync in progress',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: OWColors.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _historicalSentCount > 0
+                      ? 'Keep the app open to ensure your data keeps flowing. '
+                            '${_formatCount(_historicalSentCount)} records sent so far.'
+                      : 'Keep the app open to ensure your data keeps flowing.',
+                  style: const TextStyle(fontSize: 13, color: OWColors.textSecondary, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatCount(int count) {
+    final s = count.toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(' ');
+      buf.write(s[i]);
+    }
+    return buf.toString();
   }
 
   Widget _buildLoginSection() {
@@ -964,14 +1057,6 @@ class _HomePageState extends State<HomePage> {
                   ? 'Background sync is active'
                   : 'Sync ${_syncDaysBack != null ? 'last $_syncDaysBack days' : 'full history'}',
               onTap: _isSyncing ? _stopBackgroundSync : _startBackgroundSync,
-            ),
-            _buildDivider(),
-            _buildActionTile(
-              icon: CupertinoIcons.arrow_2_circlepath,
-              iconColor: OWColors.accentIndigo,
-              title: 'Sync Now',
-              subtitle: 'Force an immediate sync',
-              onTap: _syncNow,
             ),
           ],
           _buildDivider(),

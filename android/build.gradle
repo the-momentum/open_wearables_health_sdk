@@ -49,7 +49,7 @@ android {
     }
 
     dependencies {
-        implementation("com.github.the-momentum.open_wearables_android_sdk:sdk:v0.10.0")
+        implementation("com.github.the-momentum.open_wearables_android_sdk:sdk:v0.11.2")
 
         // Testing
         testImplementation("org.jetbrains.kotlin:kotlin-test")

@@ -383,7 +383,6 @@ class HealthService {
 | `requestAuthorization({types})` | Request health data permissions |
 | `startBackgroundSync()` | Enable background sync |
 | `stopBackgroundSync()` | Disable background sync |
-| `syncNow()` | Trigger immediate sync |
 | `resetAnchors()` | Reset sync state (forces full re-export) |
 | `getStoredCredentials()` | Get stored credentials for debugging |
 | `getSyncStatus()` | Get current sync session status |

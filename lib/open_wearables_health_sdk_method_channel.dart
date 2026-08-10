@@ -113,11 +113,6 @@ class MethodChannelOpenWearablesHealthSdk extends OpenWearablesHealthSdkPlatform
   }
 
   @override
-  Future<void> syncNow() async {
-    await _channel.invokeMethod<void>('syncNow');
-  }
-
-  @override
   Future<void> stopBackgroundSync() async {
     await _channel.invokeMethod<void>('stopBackgroundSync');
   }

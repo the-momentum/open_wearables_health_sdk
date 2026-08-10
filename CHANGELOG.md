@@ -1,3 +1,11 @@
+## 0.0.21
+
+* Bumped native iOS SDK dependency from `~> 0.13.0` to `~> 0.14.0`.
+* Bumped native Android SDK dependency from `v0.10.0` to `v0.11.2`.
+* **iOS: fixed sync loop** — full export no longer gets poisoned into an infinite re-upload of old data on first-upload failure. Anchor capture errors and outbox retry storms also fixed.
+* **Historical sync banner**: example app now shows "Historical data sync in progress" with a live record count while the initial export runs, and keeps the screen awake until it completes (`wakelock_plus`).
+* **New `getSyncStatus()` keys**: `initialExportDone` and `isSyncing` exposed on both platforms.
+
 ## 0.0.20
 
 * Bumped native iOS SDK dependency from `~> 0.12.0` to `~> 0.13.0`.
