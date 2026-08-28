@@ -11,7 +11,7 @@ Uses the native OpenWearablesHealthSDK under the hood.
   s.author           = { 'Open Wearables' => 'hello@openwearables.io' }
   s.source           = { :path => '.' }
 
-  s.source_files = 'Classes/**/*.{h,m,swift}'
+  s.source_files = 'open_wearables_health_sdk/Sources/**/*.swift'
 
   s.dependency 'Flutter'
   s.dependency 'OpenWearablesHealthSDK', '~> 0.14.0'
