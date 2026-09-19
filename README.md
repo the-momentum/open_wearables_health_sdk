@@ -355,7 +355,7 @@ class HealthService {
 | Category | Types |
 |----------|-------|
 | **Activity** | distanceCycling, walkingSpeed, walkingStepLength, walkingAsymmetryPercentage, walkingDoubleSupportPercentage, sixMinuteWalkTestDistance |
-| **Energy** | restingEnergy (alias of basalEnergy) |
+| **Energy** | restingEnergy (alias of basalEnergy), totalCaloriesBurned (Android only) |
 | **Heart** | bloodOxygen (alias of oxygenSaturation) |
 | **Body** | bmi, waistCircumference (iOS 16+) |
 | **Glucose** | insulinDelivery (iOS 16+) |
