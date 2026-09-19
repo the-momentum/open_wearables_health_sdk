@@ -15,6 +15,7 @@ enum HealthDataType {
   activeEnergy,
   basalEnergy,
   restingEnergy, // alias of basalEnergy on iOS
+  totalCaloriesBurned, // Android Health Connect only; iOS ignores it
 
   // Heart
   heartRate,
@@ -106,6 +107,8 @@ extension HealthDataTypeId on HealthDataType {
         return 'basalEnergy';
       case HealthDataType.restingEnergy:
         return 'restingEnergy';
+      case HealthDataType.totalCaloriesBurned:
+        return 'totalCaloriesBurned';
 
       // Heart
       case HealthDataType.heartRate:

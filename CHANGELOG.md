@@ -1,5 +1,7 @@
 ## Unreleased
 
+* **Android total calories**: `HealthDataType.totalCaloriesBurned` requests Health Connect's `TotalCaloriesBurnedRecord` (and the session `totalCalories` aggregate that needs its permission). Android only; iOS ignores the id.
+
 ## 0.0.23
 
 * Bumped native iOS SDK dependency from `~> 0.14.0` to `~> 0.15.0`.
