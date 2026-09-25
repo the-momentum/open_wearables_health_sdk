@@ -1,4 +1,11 @@
-## Unreleased
+## 0.0.24
+
+* Bumped native Android SDK dependency from `v0.12.0` to `v0.13.0` (JitPack `com.github.the-momentum.open_wearables_android_sdk:sdk:v0.13.0`).
+  - Incremental sync uses Health Connect change tokens and Samsung `readChanges`, so backfilled records are no longer dropped.
+  - Background sync starts immediately and retries when the device is locked. An open app reads 2000 records per page; background stays at 100.
+  - `signOut()` tells the backend the connection was removed. Every `signIn()`, and switching between Samsung Health and Health Connect, starts a full export.
+  - Samsung workout codes are sent as activity names, and integer body-composition values are no longer dropped.
+  - Implausible timestamps are rejected, and Health Connect history permission is requested so full export is not limited to the recent window.
 
 ## 0.0.23
 

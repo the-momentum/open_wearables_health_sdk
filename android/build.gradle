@@ -19,6 +19,8 @@ rootProject.allprojects {
         maven {
             url = uri("https://jitpack.io")
         }
+        google()
+        mavenCentral()
     }
 }
 
@@ -49,7 +51,7 @@ android {
     }
 
     dependencies {
-        implementation("com.github.the-momentum.open_wearables_android_sdk:sdk:v0.12.0")
+        implementation("com.github.the-momentum.open_wearables_android_sdk:sdk:v0.13.0")
 
         // Testing
         testImplementation("org.jetbrains.kotlin:kotlin-test")

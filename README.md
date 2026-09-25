@@ -22,7 +22,7 @@ A Flutter plugin for secure background health data synchronization from **Apple 
 
 ```yaml
 dependencies:
-  open_wearables_health_sdk: ^0.0.23
+  open_wearables_health_sdk: ^0.0.24
 ```
 
 ### 2. iOS Configuration
