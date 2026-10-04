@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'open_wearables_health_sdk'
-  s.version          = '0.0.23'
+  s.version          = '0.0.24'
   s.summary          = 'Flutter SDK for background health data synchronization to Open Wearables platform.'
   s.description      = <<-DESC
 Flutter SDK for secure background health data synchronization from Apple HealthKit to the Open Wearables platform.
@@ -11,7 +11,7 @@ Uses the native OpenWearablesHealthSDK under the hood.
   s.author           = { 'Open Wearables' => 'hello@openwearables.io' }
   s.source           = { :path => '.' }
 
-  s.source_files = 'Classes/**/*.{h,m,swift}'
+  s.source_files = 'open_wearables_health_sdk/Sources/**/*.swift'
 
   s.dependency 'Flutter'
   s.dependency 'OpenWearablesHealthSDK', '~> 0.15.0'

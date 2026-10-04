@@ -269,7 +269,8 @@ class OpenWearablesHealthSdk {
   /// On iOS, this will present the HealthKit authorization sheet.
   /// On Android, this will request Health Connect permissions.
   ///
-  /// Returns true if authorization was successful, false otherwise.
+  /// Returns true when at least one requested type was granted. Denied types
+  /// are not synced. Returns false when the user grants nothing.
   ///
   /// Throws [NotSignedInException] if no user is signed in.
   static Future<bool> requestAuthorization({required List<HealthDataType> types}) async {

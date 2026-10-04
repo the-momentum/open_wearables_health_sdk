@@ -392,8 +392,16 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      // Configure SDK with host
+      // Configure SDK with host. configure() rebuilds the native provider
+      // from storage; sign-out used to drop that, so re-apply the provider
+      // the screen is showing.
       await OpenWearablesHealthSdk.configure(host: host);
+      if (Platform.isAndroid && _selectedProviderId != null) {
+        final provider = AndroidHealthProvider.fromId(_selectedProviderId!);
+        if (provider != null) {
+          await OpenWearablesHealthSdk.setProvider(provider);
+        }
+      }
       _checkStatus();
 
       // Sign in with the received credentials
