@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.0.27
+
+* Bumped native Android SDK from `v0.13.1` to `v0.13.2`.
+  - **Health Connect authorization no longer fails after the data grant**: when the user granted data types, `requestAuthorization` now returns `true` even if the follow-up background/history permission request fails. Before, on Android 14+ devices without the Health Connect app package, the fallback screen could not be opened and the whole call returned `false`. Background and history read are now requested only when Health Connect reports them available.
+
 ## 0.0.26
 
 * Bumped native iOS SDK dependency from `~> 0.15.0` to `~> 0.16.0` (CocoaPods and SPM).
