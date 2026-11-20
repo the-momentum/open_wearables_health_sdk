@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.0.28
+
+* Bumped native Android SDK from `v0.13.2` to `v0.13.3`.
+  - **Release builds with AGP 9 no longer crash on start**: apps built with Android Gradle Plugin 9.0 and `isMinifyEnabled = true` crashed before the first frame in `androidx.startup.InitializationProvider` (`Failed to create an instance of class androidx.work.impl.WorkDatabase`). R8 9.0 removed the constructor Room uses to create WorkManager's database. The SDK now uses WorkManager 2.12.0 and ships keep rules for it. Apps on AGP 8 were not affected. Apps that added their own Room keep rules for this can drop them.
+
 ## 0.0.27
 
 * Bumped native Android SDK from `v0.13.1` to `v0.13.2`.
